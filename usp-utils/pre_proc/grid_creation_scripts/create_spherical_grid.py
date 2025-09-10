@@ -94,10 +94,10 @@ def main(args):
     os.remove(out_basepath + '-HFUN.msh')
     os.remove(out_basepath + '_triangles.nc')
     del_dir = os.path.dirname(glob.glob(out_dir + '/*/graph.info')[0])
-    os.remove(del_dir + 'graph.info')
-    os.remove(del_dir + 'mesh_in.nc')
-    os.remove(del_dir + 'mesh_out.nc')
-    os.removedir(del_dir)
+    os.remove(del_dir + '/graph.info')
+    os.remove(del_dir + '/mesh_in.nc')
+    os.remove(del_dir + '/mesh_out.nc')
+    os.removedirs(del_dir)
 
     print("Done! Mesh saved to "+out_dir)
 
