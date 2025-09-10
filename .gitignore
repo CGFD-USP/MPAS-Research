@@ -69,3 +69,6 @@ docs/references
 runs
 grids
 met_data
+
+# Python compiled bytecode folders
+__pycache__
