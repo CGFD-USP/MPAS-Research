@@ -36,9 +36,10 @@ if [ ! $status ]
 end
 
 set N (conda info --envs | grep '^cgfd-usp-mpas ' | wc -l)
-if [ $N ]
+if [ $N = 0 ]
     echo -e "$WARNING Couldn't find the 'cgfd-usp-mpas' conda environment. It will not be activated and Python scripts might not work. If you wish to install the conda environment please run the script in $SCRIPT_DIR/install_conda_environment.sh"
     return 1
 end
 
+conda activate cgfd-usp-mpas
 echo -e "$INFO Conda enviroment 'cgfd-usp-mpas' activated"
