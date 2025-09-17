@@ -61,3 +61,14 @@ stream_list.*
 *.i90
 
 src/core_*/inc
+
+#Directory that store MPAS references
+docs/references
+
+# Directories created by usp-utils scripts
+runs
+grids
+met_data
+
+# Python compiled bytecode folders
+__pycache__
