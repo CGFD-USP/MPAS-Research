@@ -255,6 +255,16 @@
                      units="-"
                      description="Coefficient for the divergent component of the Laplacian filter of momentum in the relaxation zone"
                      possible_values="Positive real values"/>
+
+                <nml_option name="config_use_custom_weightsOnEdge" type="logical" default_value="false"
+                     units="-"
+                     description="Whether to use custom weightsOnEdge read from custom_operators stream file"
+                     possible_values="Logical values"/>
+
+                <nml_option name="config_use_custom_coeffs_reconstruct" type="logical" default_value="false"
+                     units="-"
+                     description="Whether to use custom coeffs_reconstruct read from custom_operators stream file"
+                     possible_values="Logical values"/>
         </nml_record>
 
         <nml_record name="damping" in_defaults="true">
@@ -3917,4 +3927,10 @@
 #ifdef DO_PHYSICS
 #include "physics/Registry_noahmp.xml"
 #endif
+
+<!-- **************************************************************************************** -->
+<!-- *********************************** Custom Operators *********************************** -->
+<!-- **************************************************************************************** -->
+
+#include "Registry_custom_operators.xml"
 </registry>

@@ -372,6 +372,7 @@ module atm_core
       use mpas_vector_reconstruction
       use mpas_stream_manager
       use mpas_atm_boundaries, only : mpas_atm_setup_bdy_masks
+      use mpas_atm_custom_operators, only: mpas_atm_init_custom_operators
 #ifdef DO_PHYSICS
 !     use mpas_atmphys_aquaplanet
       use mpas_atmphys_control
@@ -533,6 +534,8 @@ module atm_core
 
       call mpas_rbf_interp_initialize(mesh)
       call mpas_init_reconstruct(mesh)
+
+      call mpas_atm_init_custom_operators(block, mesh)
 
       call mpas_pool_get_array(state, 'u', u, 1)
       call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
