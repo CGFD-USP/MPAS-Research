@@ -260,6 +260,17 @@ module atm_core
       end if
 
 
+      ! Note: The 'custom_operators' stream has the 'custom_operators' package attached to it, the MPAS_stream_mgr_read( )
+      !       call here will actually try to read the stream only if custom_operators is being used in the run.
+      call MPAS_stream_mgr_read(domain % streamManager, streamID='custom_operators', whence=MPAS_STREAM_NEAREST, ierr=ierr)
+      if (ierr /= MPAS_STREAM_MGR_NOERR) then
+         call mpas_log_write('********************************************************************************', messageType=MPAS_LOG_ERR)
+         call mpas_log_write('Error reading custom_operators stream',                                                          messageType=MPAS_LOG_ERR)
+         call mpas_log_write('********************************************************************************', messageType=MPAS_LOG_CRIT)
+      end if
+      call MPAS_stream_mgr_reset_alarms(domain % streamManager, streamID='custom_operators', ierr=ierr)
+
+
       block => domain % blocklist
       do while (associated(block))
          call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
