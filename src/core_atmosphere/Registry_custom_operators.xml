@@ -1,5 +1,12 @@
 <!-- <root> -->
 
+<dims>
+
+    <dim name="trueMaxEdges2"
+         description="The true largest number of edges involved in reconstruction of tangential velocity for an edge"/>
+
+</dims>
+
 <packages>
     <package name="custom_operators" description="Read custom operators weights from NetCDF file"/>
     <package name="custom_weightsOnEdge" description="Read custom weightsOnEdge from custom operators stream NetCDF file"/>
@@ -28,7 +35,7 @@
         description="Custom coefficients to reconstruct velocity vectors at cell centers"
         packages="custom_coeffs_reconstruct"/>
 
-    <var name="coeffs_edge_tanVel_reconstruct" type="real" dimensions="maxEdges2 nEdges" units="unitless"
+    <var name="coeffs_edge_tanVel_reconstruct" type="real" dimensions="trueMaxEdges2 nEdges" units="unitless"
         description="Custom weights used in reconstruction of tangential velocity for an edge"
         packages="custom_weightsOnEdge"/>
 

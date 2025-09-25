@@ -18,14 +18,20 @@ module mpas_atm_custom_operators
       logical, pointer :: config_use_custom_weightsOnEdge
       logical, pointer :: config_use_custom_coeffs_reconstruct
 
+      integer, pointer :: trueMaxEdges2_ptr
+      integer :: trueMaxEdges2
+
       call mpas_pool_get_config(block % configs, 'config_use_custom_weightsOnEdge', config_use_custom_weightsOnEdge)
 
       if (config_use_custom_weightsOnEdge) then
 
          call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
          call mpas_pool_get_array(mesh, 'coeffs_edge_tanVel_reconstruct', new_weightsOnEdge)
+         call mpas_pool_get_dimension(mesh, 'trueMaxEdges2', trueMaxEdges2_ptr)
 
-         weightsOnEdge(:,:) = new_weightsOnEdge(:,:)
+         trueMaxEdges2 = trueMaxEdges2_ptr
+
+         weightsOnEdge(1:trueMaxEdges2,:) = new_weightsOnEdge(1:trueMaxEdges2,:)
 
       end if
 
