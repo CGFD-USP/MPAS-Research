@@ -495,7 +495,7 @@ module atm_core
       nVertices = nVertices_ptr
       nVertLevels = nVertLevels_ptr
 
-      if (.not.config_ke_use_reconstructed_vel_local) then
+      if (.not.config_ke_use_reconstructed_vel) then
          allocate(ke_vertex(nVertLevels,nVertices+1))  ! ke_vertex is a module variable defined in mpas_atm_time_integration.F
          allocate(ke_edge(nVertLevels,nEdges+1))       ! ke_edge is a module variable defined in mpas_atm_time_integration.F
          !$acc parallel default(present)
