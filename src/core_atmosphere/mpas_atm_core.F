@@ -431,7 +431,7 @@ module atm_core
       integer, dimension(:), pointer :: vertexSolveThreadStart, vertexSolveThreadEnd
 
 
-      logical, pointer :: config_do_restart, config_do_DAcycling
+      logical, pointer :: config_do_restart, config_do_DAcycling, config_ke_use_reconstructed_vel_ptr
 
       call atm_compute_signs(mesh)
    
@@ -442,7 +442,9 @@ module atm_core
 
       call mpas_pool_get_config(block % configs, 'config_do_restart', config_do_restart)
       call mpas_pool_get_config(block % configs, 'config_do_DAcycling', config_do_DAcycling)
-      call mpas_pool_get_config(block % configs, 'config_ke_use_reconstructed_vel', config_ke_use_reconstructed_vel)
+      call mpas_pool_get_config(block % configs, 'config_ke_use_reconstructed_vel', config_ke_use_reconstructed_vel_ptr)
+
+      config_ke_use_reconstructed_vel = config_ke_use_reconstructed_vel_ptr
 
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       !!!! Compute inverses to avoid divides later
