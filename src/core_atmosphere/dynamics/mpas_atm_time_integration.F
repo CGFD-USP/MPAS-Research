@@ -778,10 +778,6 @@ module atm_time_integration
 
       config_apply_lbcs = config_apply_lbcs_ptr
 
-      call mpas_pool_get_config(block % configs, 'config_ke_use_reconstructed_vel', config_ke_use_reconstructed_vel_ptr)
-
-      config_ke_use_reconstructed_vel = config_ke_use_reconstructed_vel_ptr
-
       if (trim(config_time_integration) == 'SRK3') then
          call atm_srk3(domain, dt, itimestep, exchange_halo_group)
       else

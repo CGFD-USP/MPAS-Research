@@ -442,6 +442,7 @@ module atm_core
 
       call mpas_pool_get_config(block % configs, 'config_do_restart', config_do_restart)
       call mpas_pool_get_config(block % configs, 'config_do_DAcycling', config_do_DAcycling)
+      call mpas_pool_get_config(block % configs, 'config_ke_use_reconstructed_vel', config_ke_use_reconstructed_vel)
 
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       !!!! Compute inverses to avoid divides later
@@ -494,15 +495,37 @@ module atm_core
       nVertices = nVertices_ptr
       nVertLevels = nVertLevels_ptr
 
-      allocate(ke_vertex(nVertLevels,nVertices+1))  ! ke_vertex is a module variable defined in mpas_atm_time_integration.F
-      allocate(ke_edge(nVertLevels,nEdges+1))       ! ke_edge is a module variable defined in mpas_atm_time_integration.F
-      !$acc parallel default(present)
-      !$acc loop vector
-      do k = 1, nVertLevels
-         ke_vertex(k,nVertices+1) = 0.0_RKIND
-         ke_edge(k,nEdges+1) = 0.0_RKIND
-      end do
-      !$acc end parallel
+      if (.not.config_ke_use_reconstructed_vel_local) then
+         allocate(ke_vertex(nVertLevels,nVertices+1))  ! ke_vertex is a module variable defined in mpas_atm_time_integration.F
+         allocate(ke_edge(nVertLevels,nEdges+1))       ! ke_edge is a module variable defined in mpas_atm_time_integration.F
+         !$acc parallel default(present)
+         !$acc loop vector
+         do k = 1, nVertLevels
+            ke_vertex(k,nVertices+1) = 0.0_RKIND
+            ke_edge(k,nEdges+1) = 0.0_RKIND
+         end do
+         !$acc end parallel
+      endif
+
+      call mpas_rbf_interp_initialize(mesh)
+      call mpas_init_reconstruct(mesh)
+
+      call mpas_atm_init_custom_operators(block, mesh)
+
+      call mpas_pool_get_array(state, 'u', u, 1)
+      call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
+      call mpas_pool_get_array(diag, 'uReconstructY', uReconstructY)
+      call mpas_pool_get_array(diag, 'uReconstructZ', uReconstructZ)
+      call mpas_pool_get_array(diag, 'uReconstructZonal', uReconstructZonal)
+      call mpas_pool_get_array(diag, 'uReconstructMeridional', uReconstructMeridional)
+      call mpas_reconstruct(mesh, u,                                           &
+                            uReconstructX,                                     &
+                            uReconstructY,                                     &
+                            uReconstructZ,                                     &
+                            uReconstructZonal,                                 &
+                            uReconstructMeridional,                            &
+                            includeHalos=config_ke_use_reconstructed_vel &
+                           )
 
       call mpas_pool_get_dimension(block % dimensions, 'nThreads', nThreads)
 
@@ -540,27 +563,10 @@ module atm_core
       end do
 !$OMP END PARALLEL DO
 
-      deallocate(ke_vertex)
-      deallocate(ke_edge)
-
-      call mpas_rbf_interp_initialize(mesh)
-      call mpas_init_reconstruct(mesh)
-
-      call mpas_atm_init_custom_operators(block, mesh)
-
-      call mpas_pool_get_array(state, 'u', u, 1)
-      call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
-      call mpas_pool_get_array(diag, 'uReconstructY', uReconstructY)
-      call mpas_pool_get_array(diag, 'uReconstructZ', uReconstructZ)
-      call mpas_pool_get_array(diag, 'uReconstructZonal', uReconstructZonal)
-      call mpas_pool_get_array(diag, 'uReconstructMeridional', uReconstructMeridional)
-      call mpas_reconstruct(mesh, u,                   &
-                            uReconstructX,             &
-                            uReconstructY,             &
-                            uReconstructZ,             &
-                            uReconstructZonal,         &
-                            uReconstructMeridional     &
-                           )
+      if (.not.config_ke_use_reconstructed_vel) then
+         deallocate(ke_vertex)
+         deallocate(ke_edge)
+      endif
    
 #ifdef DO_PHYSICS
       !proceed with initialization of physics parameterization if moist_physics is set to true:
