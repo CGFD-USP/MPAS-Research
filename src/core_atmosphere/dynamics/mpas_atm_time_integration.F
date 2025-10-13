@@ -6487,7 +6487,7 @@ module atm_time_integration
 !DIR$ IVDEP
          !$acc loop vector
          do k=1,nVertLevels
-            h_edge(k,iEdge) = 0.5 * (h(k,cell1) + h(k,cell2))
+            h_edge(k,iEdge) = 0.5_RKIND * (h(k,cell1) + h(k,cell2))
          end do
 
       end do
@@ -6574,7 +6574,7 @@ module atm_time_integration
                !$acc loop vector
                do k=1,nVertLevels
 !                  ke(k,iCell) = ke(k,iCell) + 0.25 * dcEdge(iEdge) * dvEdge(iEdge) * u(k,iEdge)**2
-                  ke(k,iCell) = ke(k,iCell) + 0.25 * ke_edge(k,iEdge)
+                  ke(k,iCell) = ke(k,iCell) + 0.25_RKIND * ke_edge(k,iEdge)
                end do
             end do
 !DIR$ IVDEP
@@ -6593,7 +6593,7 @@ module atm_time_integration
 !DIR$ IVDEP
             !$acc loop vector
             do k=1,nVertLevels
-               ke(k,iCell) = 0.5 * (uReconstructZonal(k,iCell)**2 + uReconstructMeridional(k,iCell)**2)
+               ke(k,iCell) = 0.5_RKIND * (uReconstructZonal(k,iCell)**2 + uReconstructMeridional(k,iCell)**2)
             end do
          end do
          !$acc end parallel
@@ -6612,7 +6612,7 @@ module atm_time_integration
          !$acc parallel default(present)
          !$acc loop gang
          do iVertex=vertexStart,vertexEnd
-            r = 0.25 * invAreaTriangle(iVertex) 
+            r = 0.25_RKIND * invAreaTriangle(iVertex) 
             !$acc loop vector
             do k=1,nVertLevels
 
@@ -6739,7 +6739,7 @@ module atm_time_integration
       do iEdge = edgeStart,edgeEnd
 !DIR$ IVDEP
          do k=1,nVertLevels
-            pv_edge(k,iEdge) =  0.5 * (pv_vertex(k,verticesOnEdge(1,iEdge)) + pv_vertex(k,verticesOnEdge(2,iEdge)))
+            pv_edge(k,iEdge) =  0.5_RKIND * (pv_vertex(k,verticesOnEdge(1,iEdge)) + pv_vertex(k,verticesOnEdge(2,iEdge)))
          end do
       end do
       !$acc end parallel
