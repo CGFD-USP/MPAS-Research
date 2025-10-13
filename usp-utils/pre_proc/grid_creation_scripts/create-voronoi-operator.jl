@@ -3,6 +3,5 @@
 using NCDatasets, Comonicon
 using VoronoiOperators
 
-const ce = Base.get_extension(VoronoiOperators, :ComoniconExt)
 
-ce.command_main(ARGS)
+VoronoiOperators.create_voronoi_operator(ARGS)
