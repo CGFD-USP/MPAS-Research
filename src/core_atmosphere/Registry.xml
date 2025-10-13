@@ -271,6 +271,11 @@
                      description="Whether to use the cell reconstructed velocity to compute the cell kinetic energy"
                      possible_values="Logical values"/>
 
+                <nml_option name="config_ke_use_vertex_reconstructed_vel" type="logical" default_value="false"
+                     units="-"
+                     description="Whether to use the vertex reconstructed velocity to compute the cell kinetic energy"
+                     possible_values="Logical values"/>
+
         </nml_record>
 
         <nml_record name="damping" in_defaults="true">

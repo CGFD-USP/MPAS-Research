@@ -11,6 +11,7 @@
     <package name="custom_operators" description="Read custom operators weights from NetCDF file"/>
     <package name="custom_weightsOnEdge" description="Read custom weightsOnEdge from custom operators stream NetCDF file"/>
     <package name="custom_coeffs_reconstruct" description="Read custom coefs_reconstruct from custom operators stream NetCDF file"/>
+    <package name="custom_vertex_coeffs_reconstruct" description="Read custom vertex_coefs_reconstruct from custom operators stream NetCDF file"/>
 </packages>
 
 <streams>
@@ -24,6 +25,7 @@
 
         <var name="coeffs_edge_tanVel_reconstruct" packages="custom_weightsOnEdge"/>
         <var name="coeffs_cell_vel_reconstruct" packages="custom_coeffs_reconstruct"/>
+        <var name="coeffs_vertex_vel_reconstruct" packages="custom_vertex_coeffs_reconstruct"/>
 
     </stream>
 
@@ -38,6 +40,10 @@
     <var name="coeffs_edge_tanVel_reconstruct" type="real" dimensions="trueMaxEdges2 nEdges" units="unitless"
         description="Custom weights used in reconstruction of tangential velocity for an edge"
         packages="custom_weightsOnEdge"/>
+
+    <var name="coeffs_vertex_vel_reconstruct" type="real" dimensions="R3 vertexDegree nVertices" units="unitless"
+        description="Coefficients to reconstruct velocity vectors at vertices"
+        packages="custom_vertex_coeffs_reconstruct"/>
 
 </var_struct>
 
