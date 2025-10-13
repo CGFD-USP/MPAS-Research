@@ -184,13 +184,15 @@ module atm_time_integration
 
        ierr = 0
 
-       nullify(config_ke_use_reconstructed_vel_ptr)
-       call mpas_pool_get_config(blocklist % configs, 'config_ke_use_reconstructed_vel', config_ke_use_reconstructed_vel_ptr)
-
        nullify(config_ke_use_vertex_reconstructed_vel_ptr)
-       call mpas_pool_get_config(blocklist % configs, 'config_ke_use_vertex_reconstructed_vel', config_ke_use_reconstructed_vel_ptr)
+       call mpas_pool_get_config(blocklist % configs, 'config_ke_use_vertex_reconstructed_vel', config_ke_use_vertex_reconstructed_vel_ptr)
 
        if (config_ke_use_vertex_reconstructed_vel_ptr) then
+
+           nullify(config_ke_use_reconstructed_vel_ptr)
+           call mpas_pool_get_config(blocklist % configs, 'config_ke_use_reconstructed_vel', config_ke_use_reconstructed_vel_ptr)
+
+
            if (.not.config_ke_use_reconstructed_vel_ptr) then
                call mpas_log_write('The config_ke_use_vertex_reconstructed_vel=true option can only be', &
                                    messageType=MPAS_LOG_WARN)
