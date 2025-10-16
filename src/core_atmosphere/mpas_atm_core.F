@@ -260,6 +260,17 @@ module atm_core
       end if
 
 
+      ! Note: The 'custom_operators' stream has the 'custom_operators' package attached to it, the MPAS_stream_mgr_read( )
+      !       call here will actually try to read the stream only if custom_operators is being used in the run.
+      call MPAS_stream_mgr_read(domain % streamManager, streamID='custom_operators', whence=MPAS_STREAM_NEAREST, ierr=ierr)
+      if (ierr /= MPAS_STREAM_MGR_NOERR) then
+         call mpas_log_write('********************************************************************************', messageType=MPAS_LOG_ERR)
+         call mpas_log_write('Error reading custom_operators stream',                                                          messageType=MPAS_LOG_ERR)
+         call mpas_log_write('********************************************************************************', messageType=MPAS_LOG_CRIT)
+      end if
+      call MPAS_stream_mgr_reset_alarms(domain % streamManager, streamID='custom_operators', ierr=ierr)
+
+
       block => domain % blocklist
       do while (associated(block))
          call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
@@ -372,6 +383,7 @@ module atm_core
       use mpas_vector_reconstruction
       use mpas_stream_manager
       use mpas_atm_boundaries, only : mpas_atm_setup_bdy_masks
+      use mpas_atm_custom_operators, only: mpas_atm_init_custom_operators
 #ifdef DO_PHYSICS
 !     use mpas_atmphys_aquaplanet
       use mpas_atmphys_control
@@ -420,6 +432,7 @@ module atm_core
 
 
       logical, pointer :: config_do_restart, config_do_DAcycling
+      logical, pointer :: config_ke_use_reconstructed_vel_ptr, config_ke_use_vertex_reconstructed_vel_ptr
 
       call atm_compute_signs(mesh)
    
@@ -430,6 +443,11 @@ module atm_core
 
       call mpas_pool_get_config(block % configs, 'config_do_restart', config_do_restart)
       call mpas_pool_get_config(block % configs, 'config_do_DAcycling', config_do_DAcycling)
+      call mpas_pool_get_config(block % configs, 'config_ke_use_reconstructed_vel', config_ke_use_reconstructed_vel_ptr)
+      call mpas_pool_get_config(block % configs, 'config_ke_use_vertex_reconstructed_vel', config_ke_use_vertex_reconstructed_vel_ptr)
+
+      config_ke_use_reconstructed_vel = config_ke_use_reconstructed_vel_ptr
+      config_ke_use_vertex_reconstructed_vel = config_ke_use_vertex_reconstructed_vel_ptr
 
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       !!!! Compute inverses to avoid divides later
@@ -482,15 +500,47 @@ module atm_core
       nVertices = nVertices_ptr
       nVertLevels = nVertLevels_ptr
 
-      allocate(ke_vertex(nVertLevels,nVertices+1))  ! ke_vertex is a module variable defined in mpas_atm_time_integration.F
-      allocate(ke_edge(nVertLevels,nEdges+1))       ! ke_edge is a module variable defined in mpas_atm_time_integration.F
-      !$acc parallel default(present)
-      !$acc loop vector
-      do k = 1, nVertLevels
-         ke_vertex(k,nVertices+1) = 0.0_RKIND
-         ke_edge(k,nEdges+1) = 0.0_RKIND
-      end do
-      !$acc end parallel
+      if (.not.config_ke_use_reconstructed_vel) then
+         allocate(ke_vertex(nVertLevels,nVertices+1))  ! ke_vertex is a module variable defined in mpas_atm_time_integration.F
+         allocate(ke_edge(nVertLevels,nEdges+1))       ! ke_edge is a module variable defined in mpas_atm_time_integration.F
+         !$acc parallel default(present)
+         !$acc loop vector
+         do k = 1, nVertLevels
+            ke_vertex(k,nVertices+1) = 0.0_RKIND
+            ke_edge(k,nEdges+1) = 0.0_RKIND
+         end do
+         !$acc end parallel
+      endif
+
+      if (config_ke_use_vertex_reconstructed_vel) then
+         allocate(ke_vertex(nVertLevels,nVertices+1))  ! ke_vertex is a module variable defined in mpas_atm_time_integration.F
+         !$acc parallel default(present)
+         !$acc loop vector
+         do k = 1, nVertLevels
+            ke_vertex(k,nVertices+1) = 0.0_RKIND
+         end do
+         !$acc end parallel
+      endif
+
+      call mpas_rbf_interp_initialize(mesh)
+      call mpas_init_reconstruct(mesh)
+
+      call mpas_atm_init_custom_operators(block, mesh)
+
+      call mpas_pool_get_array(state, 'u', u, 1)
+      call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
+      call mpas_pool_get_array(diag, 'uReconstructY', uReconstructY)
+      call mpas_pool_get_array(diag, 'uReconstructZ', uReconstructZ)
+      call mpas_pool_get_array(diag, 'uReconstructZonal', uReconstructZonal)
+      call mpas_pool_get_array(diag, 'uReconstructMeridional', uReconstructMeridional)
+      call mpas_reconstruct(mesh, u,                                           &
+                            uReconstructX,                                     &
+                            uReconstructY,                                     &
+                            uReconstructZ,                                     &
+                            uReconstructZonal,                                 &
+                            uReconstructMeridional,                            &
+                            includeHalos=config_ke_use_reconstructed_vel &
+                           )
 
       call mpas_pool_get_dimension(block % dimensions, 'nThreads', nThreads)
 
@@ -528,25 +578,14 @@ module atm_core
       end do
 !$OMP END PARALLEL DO
 
-      deallocate(ke_vertex)
-      deallocate(ke_edge)
+      if (.not.config_ke_use_reconstructed_vel) then
+         deallocate(ke_vertex)
+         deallocate(ke_edge)
+      endif
 
-      call mpas_rbf_interp_initialize(mesh)
-      call mpas_init_reconstruct(mesh)
-
-      call mpas_pool_get_array(state, 'u', u, 1)
-      call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
-      call mpas_pool_get_array(diag, 'uReconstructY', uReconstructY)
-      call mpas_pool_get_array(diag, 'uReconstructZ', uReconstructZ)
-      call mpas_pool_get_array(diag, 'uReconstructZonal', uReconstructZonal)
-      call mpas_pool_get_array(diag, 'uReconstructMeridional', uReconstructMeridional)
-      call mpas_reconstruct(mesh, u,                   &
-                            uReconstructX,             &
-                            uReconstructY,             &
-                            uReconstructZ,             &
-                            uReconstructZonal,         &
-                            uReconstructMeridional     &
-                           )
+      if (config_ke_use_vertex_reconstructed_vel) then
+         deallocate(ke_vertex)
+      endif
    
 #ifdef DO_PHYSICS
       !proceed with initialization of physics parameterization if moist_physics is set to true:

@@ -19,7 +19,8 @@ OBJS = mpas_atm_core.o \
        mpas_atm_core_interface.o \
        mpas_atm_dimensions.o \
        mpas_atm_threading.o \
-       mpas_atm_halos.o
+       mpas_atm_halos.o \
+       mpas_atm_custom_operators.o
 
 all: $(PHYSCORE) dycore diagcore atmcore utilities
 
@@ -61,9 +62,11 @@ atmcore: $(PHYSCORE) dycore diagcore $(OBJS)
 
 mpas_atm_core_interface.o: mpas_atm_core.o
 
-mpas_atm_core.o: dycore diagcore mpas_atm_threading.o mpas_atm_halos.o
+mpas_atm_core.o: dycore diagcore mpas_atm_threading.o mpas_atm_halos.o mpas_atm_custom_operators.o
 
 mpas_atm_dimensions.o:
+
+mpas_atm_custom_operators.o:
 
 clean:
 	( cd physics; $(MAKE) clean )

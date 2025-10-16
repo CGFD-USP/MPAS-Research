@@ -13,6 +13,8 @@ If the user has installed the conda environment provided by `install_conda_envir
 
 Pre and post processing scripts are placed in `./pre_proc` and `./post_proc` respectively.
 
+Julia scipts (`.jl` files) rely on a shared environment called `cgfd-usp-mpas` which can be installed with the `install_julia_environment.jl` script. The same script can also be used to update the environment.
+
 ### Note to developers
 
 New python **modules** (scripts containing definitions that are imported into other scripts) should be placed into `./libs/py`, not in the same folder as the actual scripts importing it.
