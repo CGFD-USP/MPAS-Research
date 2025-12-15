@@ -12,6 +12,7 @@
     <package name="custom_weightsOnEdge" description="Read custom weightsOnEdge from custom operators stream NetCDF file"/>
     <package name="custom_coeffs_reconstruct" description="Read custom coefs_reconstruct from custom operators stream NetCDF file"/>
     <package name="custom_vertex_coeffs_reconstruct" description="Read custom vertex_coefs_reconstruct from custom operators stream NetCDF file"/>
+    <package name="custom_areas" description="Read custom areas values from custom operators stream NetCDF file"/>
 </packages>
 
 <streams>
@@ -26,6 +27,9 @@
         <var name="coeffs_edge_tanVel_reconstruct" packages="custom_weightsOnEdge"/>
         <var name="coeffs_cell_vel_reconstruct" packages="custom_coeffs_reconstruct"/>
         <var name="coeffs_vertex_vel_reconstruct" packages="custom_vertex_coeffs_reconstruct"/>
+			  <var name="custom_areaCell" packages="custom_areas"/>
+			  <var name="custom_kiteAreasOnVertex" packages="custom_areas"/>
+			  <var name="custom_areaTriangle" packages="custom_areas"/>
 
     </stream>
 
@@ -44,6 +48,18 @@
     <var name="coeffs_vertex_vel_reconstruct" type="real" dimensions="R3 vertexDegree nVertices" units="unitless"
         description="Coefficients to reconstruct velocity vectors at vertices"
         packages="custom_vertex_coeffs_reconstruct"/>
+
+    <var name="custom_areaCell" type="real" dimensions="nCells" units="m^2"
+         description="Custom area of a Voronoi cell"
+         packages="custom_areas"/>
+
+    <var name="custom_kiteAreasOnVertex" type="real" dimensions="vertexDegree nVertices" units="m^2"
+         description="Custom Intersection areas between primal (Voronoi) and dual (triangular) mesh cells"
+         packages="custom_areas"/>
+
+    <var name="custom_areaTriangle" type="real" dimensions="nVertices" units="m^2"
+         description="Custom area of a Delaunay triangle"
+         packages="custom_areas"/>
 
 </var_struct>
 
