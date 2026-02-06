@@ -65,14 +65,14 @@ module mpas_atm_custom_operators
          r_earth = r_earth*r_earth
 
          areaCell(:) = r_earth*new_areaCell(:)
-         invAreaCell(:) = 1.0_RKIND / new_areaCell(:)
+         invAreaCell(:) = 1.0_RKIND / areaCell(:)
 
          call mpas_pool_get_array(mesh, 'areaTriangle', areaTriangle)
          call mpas_pool_get_array(mesh, 'invAreaTriangle', invAreaTriangle)
          call mpas_pool_get_array(mesh, 'custom_areaTriangle', new_areaTriangle)
 
          areaTriangle(:) = r_earth*new_areaTriangle(:)
-         invAreaTriangle(:) = 1.0_RKIND / new_areaTriangle(:)
+         invAreaTriangle(:) = 1.0_RKIND / areaTriangle(:)
 
          call mpas_pool_get_array(mesh, 'kiteAreasOnVertex', kiteAreasOnVertex)
          call mpas_pool_get_array(mesh, 'custom_kiteAreasOnVertex', new_kiteAreasOnVertex)
