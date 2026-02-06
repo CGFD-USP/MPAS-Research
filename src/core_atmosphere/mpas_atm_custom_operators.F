@@ -24,6 +24,8 @@ module mpas_atm_custom_operators
 
       integer, pointer :: trueMaxEdges2_ptr
       integer :: trueMaxEdges2
+      real (kind=RKIND), pointer :: r_earth_ptr
+      real (kind=RKIND) :: r_earth
 
       call mpas_pool_get_config(block % configs, 'config_use_custom_weightsOnEdge', config_use_custom_weightsOnEdge)
 
@@ -57,21 +59,25 @@ module mpas_atm_custom_operators
          call mpas_pool_get_array(mesh, 'areaCell', areaCell)
          call mpas_pool_get_array(mesh, 'invAreaCell', invAreaCell)
          call mpas_pool_get_array(mesh, 'custom_areaCell', new_areaCell)
+         call mpas_pool_get_config(mesh, 'sphere_radius', r_earth_ptr)
 
-         areaCell(:) = new_areaCell(:)
+         r_earth = r_earth_ptr
+         r_earth = r_earth*r_earth
+
+         areaCell(:) = r_earth*new_areaCell(:)
          invAreaCell(:) = 1.0_RKIND / new_areaCell(:)
 
          call mpas_pool_get_array(mesh, 'areaTriangle', areaTriangle)
          call mpas_pool_get_array(mesh, 'invAreaTriangle', invAreaTriangle)
          call mpas_pool_get_array(mesh, 'custom_areaTriangle', new_areaTriangle)
 
-         areaTriangle(:) = new_areaTriangle(:)
+         areaTriangle(:) = r_earth*new_areaTriangle(:)
          invAreaTriangle(:) = 1.0_RKIND / new_areaTriangle(:)
 
          call mpas_pool_get_array(mesh, 'kiteAreasOnVertex', kiteAreasOnVertex)
          call mpas_pool_get_array(mesh, 'custom_kiteAreasOnVertex', new_kiteAreasOnVertex)
 
-         kiteAreasOnVertex(:,:) = new_kiteAreasOnVertex(:,:)
+         kiteAreasOnVertex(:,:) = r_earth*new_kiteAreasOnVertex(:,:)
 
       end if
 
