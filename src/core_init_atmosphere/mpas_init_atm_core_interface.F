@@ -120,7 +120,7 @@ module init_atm_core_interface
       logical, pointer :: config_native_gwd_static, config_static_interp, config_vertical_grid, config_met_interp
       logical, pointer :: config_native_gwd_gsl_static
       logical, pointer :: first_guess_field
-      logical, pointer :: mp_thompson_aers_in
+      logical, pointer :: microphysics_aerosols
       integer, pointer :: config_init_case
       logical, pointer :: noahmp, config_noahmp_static
 
@@ -167,8 +167,8 @@ module init_atm_core_interface
       nullify(met_stage_out)
       call mpas_pool_get_package(packages, 'met_stage_outActive', met_stage_out)
 
-      nullify(mp_thompson_aers_in)
-      call mpas_pool_get_package(packages, 'mp_thompson_aers_inActive', mp_thompson_aers_in)
+      nullify(microphysics_aerosols)
+      call mpas_pool_get_package(packages, 'microphysics_aerosolsActive', microphysics_aerosols)
 
       if (.not. associated(initial_conds) .or. &
           .not. associated(sfc_update) .or. &
@@ -179,7 +179,7 @@ module init_atm_core_interface
           .not. associated(vertical_stage_out) .or. &
           .not. associated(met_stage_in) .or. &
           .not. associated(met_stage_out) .or. &
-          .not. associated(mp_thompson_aers_in)) then
+          .not. associated(microphysics_aerosols)) then
          call mpas_log_write('********************************************************************************', messageType=MPAS_LOG_ERR)
          call mpas_log_write('* Error while setting up packages for init_atmosphere core.',                      messageType=MPAS_LOG_ERR)
          call mpas_log_write('********************************************************************************', messageType=MPAS_LOG_ERR)
@@ -197,12 +197,12 @@ module init_atm_core_interface
 
       if (config_init_case == 9) then
          lbcs = .true.
-         mp_thompson_aers_in = .false.
+         microphysics_aerosols = .false.
          inquire(file="QNWFA_QNIFA_SIGMA_MONTHLY.dat",exist=lexist)
-         if(lexist) mp_thompson_aers_in = .true.
+         if(lexist) microphysics_aerosols = .true.
       else
          lbcs = .false.
-         mp_thompson_aers_in = .false.
+         microphysics_aerosols = .false.
       end if
 
       if (config_init_case == 7) then
@@ -226,9 +226,9 @@ module init_atm_core_interface
                         (.not. config_vertical_grid)
          met_stage_out = config_met_interp
 
-         mp_thompson_aers_in = .false.
+         microphysics_aerosols = .false.
          inquire(file="QNWFA_QNIFA_SIGMA_MONTHLY.dat",exist=lexist)
-         if((lexist .and. met_stage_out) .or. (lexist .and. met_stage_in)) mp_thompson_aers_in = .true.
+         if((lexist .and. met_stage_out) .or. (lexist .and. met_stage_in)) microphysics_aerosols = .true.
 
       else if (config_init_case == 8) then
          gwd_stage_in = .false.
@@ -252,9 +252,9 @@ module init_atm_core_interface
          met_stage_in = .true.
          met_stage_out = .true.
 
-         mp_thompson_aers_in = .false.
+         microphysics_aerosols = .false.
          inquire(file="QNWFA_QNIFA_SIGMA_MONTHLY.dat",exist=lexist)
-         if((lexist .and. met_stage_out) .or. (lexist .and. met_stage_in)) mp_thompson_aers_in = .true.
+         if((lexist .and. met_stage_out) .or. (lexist .and. met_stage_in)) microphysics_aerosols = .true.
 
          initial_conds = .false.   ! Also, turn off the initial_conds package to avoid writing the IC "output" stream
 
