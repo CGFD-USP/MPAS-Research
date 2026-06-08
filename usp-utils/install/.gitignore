@@ -1,0 +1,4 @@
+# Personal copies of the install scripts with machine-specific paths.
+# Copy a template (e.g. mpas_lib_install.sh -> mpas_lib_install.local.sh),
+# edit LIBSRC/LIBBASE, and run the .local.sh copy. These are never committed.
+*.local.sh
