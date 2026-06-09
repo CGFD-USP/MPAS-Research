@@ -103,8 +103,9 @@ conda environment:
 
 The model needs MPI, HDF5, PnetCDF, NetCDF-C, NetCDF-Fortran, and PIO. The
 `install/mpas_lib_install.sh` script builds them all from source — including
-its **own MPICH**, so you do not need a system MPI. (The template is already
-patched for gfortran ≥ 10; see Troubleshooting if you adapt it.)
+its **own MPICH**, so you do not need a system MPI. It is kept as the
+**unmodified NCAR script** — try it as-is first; if a step fails, see
+[Known build issues (optional fixes)](#known-build-issues-optional-fixes) below.
 
 > **PIO is optional.** MPAS v8 ships a bundled I/O layer (SMIOL,
 > `src/external/SMIOL`) and falls back to it automatically when the `PIO`
@@ -157,6 +158,28 @@ bash /full/path/to/usp-utils/install/mpas_lib_install.local.sh 2>&1 | tee mpas_l
 ```
 
 Order built: MPICH → zlib → HDF5 → PnetCDF → NetCDF-C → NetCDF-Fortran → PIO.
+
+### Known build issues (optional fixes)
+
+Run the unmodified script first. If a step fails, the fixes below have worked
+for us — apply them **in your `.local.sh` copy**, not in the versioned template.
+They depend on the compiler/OS, so they are not guaranteed to be the right fix
+on every system. **If you hit a build failure and find a different solution,
+please add it here** so the next person benefits.
+
+- **MPICH configure fails on the Fortran check** with
+  `gfortran allows mismatched arguments... no` /
+  `configure: error: The Fortran compiler gfortran will not compile files that`
+  `call the same routine with arguments of different types` — this happens with
+  **gfortran ≥ 10**, because MPICH 3.3.1's F77 check uses `FFLAGS`, which in the
+  original script does not carry the needed flag. Add
+  `-fallow-argument-mismatch` to `FFLAGS` in your `.local.sh`:
+  ```sh
+  export FFLAGS="-g -fbacktrace -fallow-argument-mismatch"
+  ```
+  *Verified on gfortran 13.3.* If MPICH does not build, every later library
+  that configures with `CC=mpicc` will then fail with the misleading
+  `C compiler cannot create executables` (the cascade from the missing `mpicc`).
 
 ---
 
@@ -275,10 +298,9 @@ mpirun -np 4 ./init_atmosphere_model      # then edit namelist.atmosphere and ru
   (Step 5).
 - **Library build fails with `C compiler cannot create executables`** — this is almost
   always a *cascade*: MPICH failed to build first (so `mpicc` is missing), and the later
-  libs that use `CC=mpicc` then can't link. Scroll up to the MPICH step. With gfortran
-  ≥ 10 the real error there is `gfortran allows mismatched arguments... no /
-  configure: error: The Fortran compiler gfortran will not compile files that call the
-  same routine with arguments of different types`. Fix: ensure `FFLAGS` includes
-  `-fallow-argument-mismatch` (already set in `mpas_lib_install.sh`).
+  libs that use `CC=mpicc` then can't link. Scroll up to the MPICH step — with gfortran
+  ≥ 10 the real error there is the Fortran mismatched-arguments check. See
+  [Known build issues (optional fixes)](#known-build-issues-optional-fixes) for the
+  `FFLAGS` fix to apply in your `.local.sh`.
 - **Switching to a branch that changes `src/`** — rebuild; the on-disk binary is not
   recompiled automatically and is not tracked by git.

@@ -30,11 +30,7 @@ export FC=$SERIAL_FC
 unset F90  # This seems to be set by default on NCAR's Cheyenne and is problematic
 unset F90FLAGS
 export CFLAGS="-g"
-# -fallow-argument-mismatch is required for gfortran >= 10 (MPICH 3.3.1's F77
-# checks use FFLAGS); without it MPICH configure fails the mismatched-arguments
-# test and never builds, which cascades into "C compiler cannot create
-# executables" in the later libs that use the (then-missing) mpicc.
-export FFLAGS="-g -fbacktrace -fallow-argument-mismatch"
+export FFLAGS="-g -fbacktrace"
 export FCFLAGS="-g -fbacktrace -fallow-argument-mismatch"
 export F77FLAGS="-g -fbacktrace -fallow-argument-mismatch"
 
