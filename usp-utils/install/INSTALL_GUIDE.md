@@ -21,17 +21,23 @@ directory unless stated otherwise.
 
 ## Step 0 — Check prerequisites
 
-You need a C/C++/Fortran compiler, `cmake` (for PIO), `git`, and `curl`/`wget`:
+You need a C/C++/Fortran compiler, `make`, `cmake` (for PIO), `git`,
+`curl`/`wget`, and `tar`/`gzip`/`bzip2` (HDF5 ships as `.tar.bz2`):
 
 ```sh
 gfortran --version && gcc --version && g++ --version
-cmake --version
-git --version && curl --version
+make --version && cmake --version
+git --version && curl --version && bzip2 --version
 ```
 
 For the Python/Julia tooling you also need `conda` on your `PATH`, and
 [`juliaup`](https://github.com/JuliaLang/juliaup) (or any Julia ≥ 1.10) if you
 plan to use the mesh-generation scripts.
+
+> **Two independent tracks.** Steps 1–3 set up the Python/Julia tooling for
+> pre/post-processing. Steps 4–6 build and compile the model and do **not**
+> require the conda or Julia environments — they only need the build
+> environment from Step 5. You can run them in a clean shell if you prefer.
 
 ---
 
@@ -97,7 +103,15 @@ conda environment:
 
 The model needs MPI, HDF5, PnetCDF, NetCDF-C, NetCDF-Fortran, and PIO. The
 `install/mpas_lib_install.sh` script builds them all from source — including
-its **own MPICH**, so you do not need a system MPI.
+its **own MPICH**, so you do not need a system MPI. (The template is already
+patched for gfortran ≥ 10; see Troubleshooting if you adapt it.)
+
+> **PIO is optional.** MPAS v8 ships a bundled I/O layer (SMIOL,
+> `src/external/SMIOL`) and falls back to it automatically when the `PIO`
+> environment variable is unset. The NCAR workflow here builds and uses PIO; if
+> you skip it (omit PIO from the build and leave `PIO` unset in Step 5), MPAS
+> still compiles and runs using SMIOL. `NETCDF` and `PNETCDF` are always
+> required.
 
 ### 4a. Download the source tarballs
 
@@ -150,8 +164,9 @@ Order built: MPICH → zlib → HDF5 → PnetCDF → NetCDF-C → NetCDF-Fortran
 
 `mpas_lib_install.sh` sets the needed variables, but only inside its own
 shell — they are gone once it exits. Before compiling MPAS, set them in your
-shell (adjust `LIBBASE` to the value you used above). Save this as a small
-`mpas_build_env.sh` and `source` it whenever you build:
+shell (adjust `LIBBASE` to the value you used above). Save this block as
+`install/mpas_build_env.local.sh` (git-ignored by `*.local.sh`) and `source`
+it whenever you build or run the model:
 
 ```sh
 export LIBBASE=/path/to/mpas-libs
@@ -204,8 +219,19 @@ namelists, streams, and physics lookup tables into a run directory:
 ```
 
 Then place your mesh in `grids/` and meteorological input in `met_data/`, edit
-the namelists/streams, and run `init_atmosphere_model` followed by
-`atmosphere_model`.
+the namelists/streams, and run the cores. MPAS is an MPI program, so launch it
+with `mpirun` (make sure the Step 5 environment is sourced, so the MPICH
+`mpirun` is on your `PATH`):
+
+```sh
+cd "$MPAS_ROOT/runs/my_first_run"
+mpirun -np 4 ./init_atmosphere_model     # build initial conditions
+# ... edit namelist.atmosphere / streams.atmosphere ...
+mpirun -np 4 ./atmosphere_model          # integrate the model
+```
+
+> Running `./atmosphere_model` directly with no namelist/inputs aborts via
+> `MPI_Abort` almost immediately — that is expected, not a build problem.
 
 ---
 
@@ -224,13 +250,15 @@ mkdir -p "$HOME/mpas-build/work" && cd "$HOME/mpas-build/work"
 bash "$MPAS_ROOT/usp-utils/install/mpas_lib_install.local.sh" 2>&1 | tee build.log
 
 # compile the model
-source mpas_build_env.sh          # the export block from Step 5
+source "$MPAS_ROOT/usp-utils/install/mpas_build_env.local.sh"   # export block from Step 5
 cd "$MPAS_ROOT"
 make gfortran CORE=init_atmosphere
 make clean CORE=atmosphere && make gfortran CORE=atmosphere
 
-# prepare a run
+# prepare and launch a run
 ./testing_and_setup/atmosphere/setup_run_dir.py "$MPAS_ROOT/runs/my_first_run"
+cd "$MPAS_ROOT/runs/my_first_run"
+mpirun -np 4 ./init_atmosphere_model      # then edit namelist.atmosphere and run atmosphere_model
 ```
 
 ---
