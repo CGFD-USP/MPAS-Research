@@ -68,16 +68,12 @@ The `.jl` scripts rely on a **shared** Julia environment, also called
 >    ```sh
 >    env -u LD_LIBRARY_PATH julia install_julia_environment.jl
 >    ```
-> 2. **Temporary upstream version conflict.** As of this writing, favba's
->    `TensorsLite` requires `Zeros 0.5` while `VoronoiMeshes`/`MPASMeshes`
->    still pin `Zeros 0.4`, so the resolve fails. Until that is fixed
->    upstream, use the workaround installer instead:
->    ```sh
->    env -u LD_LIBRARY_PATH julia install_julia_environment_workaround.jl
->    ```
->    See `usp-utils/UPSTREAM_ISSUE_zeros_compat.md` for details and the
->    one-line upstream fix. Once upstream is fixed, go back to
->    `install_julia_environment.jl`.
+> 2. **Possible upstream version conflict.** `Pkg` may fail to resolve when
+>    favba's packages are temporarily out of sync (e.g. a `Zeros` compat
+>    mismatch between `TensorsLite` and `VoronoiMeshes`/`MPASMeshes`). If you
+>    hit that, a temporary workaround is tracked separately on the
+>    `julia/zeros-compat-workaround` branch — use it (or check with the team)
+>    until the upstream packages are back in sync.
 
 To **run** the mesh scripts afterwards you do *not* need to activate anything
 manually — they select the shared environment via their shebang
@@ -263,7 +259,7 @@ mpirun -np 4 ./atmosphere_model          # integrate the model
 ```sh
 # one-time environment setup
 ./install_conda_environment.sh
-env -u LD_LIBRARY_PATH julia install_julia_environment_workaround.jl   # or the non-workaround once upstream is fixed
+env -u LD_LIBRARY_PATH julia install_julia_environment.jl   # see Step 2 if Pkg fails to resolve (Zeros conflict)
 . setup_environment.sh
 
 # build the I/O libraries (NCAR workflow)
@@ -290,8 +286,8 @@ mpirun -np 4 ./init_atmosphere_model      # then edit namelist.atmosphere and ru
 
 - **Julia segfaults during `Pkg` operations** — clear `LD_LIBRARY_PATH`:
   `env -u LD_LIBRARY_PATH julia ...` (see Step 2).
-- **Julia resolve fails on `Zeros`** — use `install_julia_environment_workaround.jl`
-  (see Step 2 and `UPSTREAM_ISSUE_zeros_compat.md`).
+- **Julia resolve fails on `Zeros`** — temporary upstream conflict; see Step 2 and the
+  `julia/zeros-compat-workaround` branch.
 - **`make` can't find `mpif90`/`mpicc`** — `$LIBBASE/bin` is not on `PATH`; re-source
   the Step 5 environment.
 - **`ERROR: The PNETCDF environment variable isn't set.`** — export `PNETCDF=$LIBBASE`

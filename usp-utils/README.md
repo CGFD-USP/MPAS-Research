@@ -18,10 +18,9 @@ Julia scipts (`.jl` files) rely on a shared environment called `cgfd-usp-mpas` w
 > **Two caveats when installing the Julia environment:**
 > - Run it with `LD_LIBRARY_PATH` cleared, otherwise Julia segfaults in this
 >   stack: `env -u LD_LIBRARY_PATH julia install_julia_environment.jl`.
-> - There is currently a temporary upstream version conflict (`Zeros` compat).
->   Until it is fixed, install with
->   `env -u LD_LIBRARY_PATH julia install_julia_environment_workaround.jl`
->   instead. See [`UPSTREAM_ISSUE_zeros_compat.md`](UPSTREAM_ISSUE_zeros_compat.md).
+> - `Pkg` may fail to resolve while favba's packages are temporarily out of sync
+>   (a `Zeros` compat conflict). If so, a temporary workaround is tracked on the
+>   `julia/zeros-compat-workaround` branch until the upstream packages are fixed.
 
 ## Installing libraries and building MPAS
 
