@@ -72,3 +72,9 @@ met_data
 
 # Python compiled bytecode folders
 __pycache__
+
+# WPS geographical static data (large downloads — never commit)
+WPS_GEOG/
+._WPS_GEOG
+geog_*.tar.gz
+geog_*.tar.bz2
