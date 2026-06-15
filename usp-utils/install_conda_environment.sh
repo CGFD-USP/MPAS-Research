@@ -1,4 +1,9 @@
-#get directory where the sourced script is located
+#!/usr/bin/env bash
+# Run with bash (./install_conda_environment.sh or bash install_conda_environment.sh).
+# It uses bash-only features (BASH_SOURCE, [ == ]); running it with `sh`/dash
+# fails with "Bad substitution" / "unexpected operator".
+
+# get directory where this script is located
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 CYAN='\033[0;36m'
