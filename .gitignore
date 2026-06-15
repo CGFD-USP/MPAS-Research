@@ -78,3 +78,16 @@ WPS_GEOG/
 ._WPS_GEOG
 geog_*.tar.gz
 geog_*.tar.bz2
+
+# Stray per-user / HOME files created in the repo when a tool ran with HOME
+# pointing here (conda cache+envs, shell history, etc.). Never commit; the real
+# ones live in $HOME — these copies are safe to delete.
+.conda/
+.cache/
+.local/
+.config/
+.claude/
+.condarc
+.viminfo
+.python_history
+.bash_history
