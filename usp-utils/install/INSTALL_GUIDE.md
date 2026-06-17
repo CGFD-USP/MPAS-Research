@@ -177,6 +177,44 @@ please add it here** so the next person benefits.
   that configures with `CC=mpicc` will then fail with the misleading
   `C compiler cannot create executables` (the cascade from the missing `mpicc`).
 
+### Alternative: gcc/gfortran-12 toolchain (if the model crashes at run time)
+
+The libraries build fine with gfortran 13, but **MPAS v8.4 miscompiles with
+gfortran 13** — the model compiles and then crashes at run time. gfortran 12 is
+the version the NCAR tutorial uses and produces a working model. If you hit
+unexplained run-time crashes, rebuild the I/O stack **and** the model with
+gfortran 12 from a conda env, into a separate `libs-gcc12` prefix (so your
+gfortran-13 build in `libs` is preserved):
+
+```sh
+# 1. a conda env that provides gfortran/gcc 12
+conda create -n mpas-gcc12 -c conda-forge 'gfortran=12' 'gcc=12' 'gxx=12'
+conda activate mpas-gcc12
+
+# 2. build the libs with the gcc12 template (copy to .local.sh, edit LIBSRC/LIBBASE)
+cp install/mpas_lib_install_gcc12.sh install/mpas_lib_install_gcc12.local.sh
+mkdir -p "$HOME/mpas-build/work-gcc12" && cd "$HOME/mpas-build/work-gcc12"
+bash "$MPAS_ROOT/usp-utils/install/mpas_lib_install_gcc12.local.sh" 2>&1 | tee build-gcc12.log
+```
+
+Then use this build environment instead of the Step 5 block (keep `mpas-gcc12`
+active so the conda `libgfortran.so.5` is found **at both compile and run time**);
+save it as `install/mpas_build_env_gcc12.local.sh` (git-ignored) and `source` it:
+
+```sh
+export LIBBASE=$HOME/mpas-build/libs-gcc12
+GCC12_ENV="${CONDA_PREFIX:?conda activate mpas-gcc12 first}"   # the active gcc12 env
+export PATH="$LIBBASE/bin:$GCC12_ENV/bin:$PATH"        # MPICH wrappers + conda gfortran-12
+export LD_LIBRARY_PATH="$LIBBASE/lib:$GCC12_ENV/lib:${LD_LIBRARY_PATH:-}"
+export NETCDF="$LIBBASE"
+export PNETCDF="$LIBBASE"
+export PIO="$LIBBASE"
+export MPAS_EXTERNAL_LIBS="-L$LIBBASE/lib -lhdf5_hl -lhdf5 -ldl -lz"
+export MPAS_EXTERNAL_INCLUDES="-I$LIBBASE/include"
+```
+
+Then compile as in Step 6. The rest of the workflow is unchanged.
+
 ---
 
 ## Step 5 — Export the build environment
