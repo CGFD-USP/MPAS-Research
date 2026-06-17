@@ -1065,7 +1065,7 @@ int parse_dimensions_from_registry(ezxml_t registry)/*{{{*/
 
 	fortprintf(fd, "\n");
 
-	fortprintf(fd, "call mpas_log_write('Assigning remaining dimensions from definitions in Registry.xml ...')\n");
+	fortprintf(fd, "      call mpas_log_write('Assigning remaining dimensions from definitions in Registry.xml ...')\n");
 
 	for (dims_xml = ezxml_child(registry, "dims"); dims_xml; dims_xml = dims_xml->next) {
 		for (dim_xml = ezxml_child(dims_xml, "dim"); dim_xml; dim_xml = dim_xml->next) {
@@ -1081,15 +1081,17 @@ int parse_dimensions_from_registry(ezxml_t registry)/*{{{*/
 				if(strncmp(dimdef, "namelist:", 9) == 0){
 					snprintf(option_name, 1024, "%s", (dimdef)+9);
 					fortprintf(fd, "         %s = %s\n", dimname, option_name);
-					fortprintf(fd, "call mpas_log_write('       %s = $i (%s)', intArgs=(/%s/))\n", dimname, option_name, option_name);
+					fortprintf(fd, "         call mpas_log_write('       %s = $i (%s)', intArgs=(/%s/))\n", dimname, option_name, option_name);
 				} else {
 					fortprintf(fd, "         %s = %s\n", dimname, dimdef);
-					fortprintf(fd, "call mpas_log_write('       %s = $i', intArgs=(/%s/))\n", dimname, dimdef);
+					fortprintf(fd, "         call mpas_log_write('       %s = $i', intArgs=(/%s/))\n", dimname, dimdef);
 				}
 				fortprintf(fd, "         call mpas_pool_add_dimension(dimensionPool, '%s', %s)\n", dimname, dimname);
 
 				fortprintf(fd, "         deallocate(%s)\n", dimname);
-				fortprintf(fd, "          else if ( %s == MPAS_MISSING_DIM ) then\n", dimname, dimname);
+				fortprintf(fd, "         ! Now let %s point to pool memory so the dimension can be referenced later in this routine as needed\n", dimname);
+				fortprintf(fd, "         call mpas_pool_get_dimension(dimensionPool, '%s', %s)\n", dimname, dimname);
+				fortprintf(fd, "      else if ( %s == MPAS_MISSING_DIM ) then\n", dimname, dimname);
 				// Namelist defined dimension
 				if(strncmp(dimdef, "namelist:", 9) == 0){
 					snprintf(option_name, 1024, "%s", (dimdef)+9);
@@ -1098,13 +1100,15 @@ int parse_dimensions_from_registry(ezxml_t registry)/*{{{*/
 					fortprintf(fd, "         %s = %s\n", dimname, dimdef);
 				}
 
-				fortprintf(fd, "          end if\n\n");
+				fortprintf(fd, "      end if\n\n");
 			} else {
 				fortprintf(fd, "      if ( .not. associated(%s) ) then\n", dimname);
 				fortprintf(fd, "         allocate(%s)\n", dimname);
 				fortprintf(fd, "         %s = MPAS_MISSING_DIM\n", dimname);
 				fortprintf(fd, "         call mpas_pool_add_dimension(dimensionPool, '%s', %s)\n", dimname, dimname);
 				fortprintf(fd, "         deallocate(%s)\n", dimname);
+				fortprintf(fd, "         ! Now let %s point to pool memory so the dimension can be referenced later in this routine as needed\n", dimname);
+				fortprintf(fd, "         call mpas_pool_get_dimension(dimensionPool, '%s', %s)\n", dimname, dimname);
 				fortprintf(fd, "      end if\n\n");
 			}
 		}
