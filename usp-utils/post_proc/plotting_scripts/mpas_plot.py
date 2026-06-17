@@ -80,6 +80,91 @@ def open_mpas_file(file, **kwargs):
 
     return ds
 
+
+def list_plottable_variables(ds):
+    """Return the names of the variables that this script can actually plot.
+
+    Plottable variables are those defined on the Voronoi cells (``nCells``) or
+    on the dual triangular mesh (``nVertices``), since those are the meshes the
+    ``plot_cells_mpas`` / ``plot_dual_mpas`` routines know how to draw.
+    """
+    plottable = []
+    for v in ds.data_vars:
+        dims = ds[v].dims
+        if 'nCells' in dims or 'nVertices' in dims:
+            plottable.append(str(v))
+    return sorted(plottable)
+
+
+def format_variables_table(ds):
+    """Build a pretty, aligned table of the plottable variables in ``ds``.
+
+    Each row shows the variable name as stored in the file, its ``long_name``
+    attribute and its ``units`` (when available), to help the user pick a
+    target variable when none was supplied on the command line.
+    """
+    variables = list_plottable_variables(ds)
+
+    if not variables:
+        return ("No plottable variables (with 'nCells' or 'nVertices' "
+                "dimension) were found in this file.")
+
+    # Marks so the user knows which extra dimensions a variable carries and
+    # therefore whether '-t/--time' and/or '-l/--level' are relevant.
+    def extra_dims(v):
+        dims = ds[v].dims
+        marks = []
+        if 'Time' in dims:
+            marks.append('Time')
+        if 'nVertLevels' in dims:
+            marks.append('Level')
+        return ', '.join(marks) if marks else '-'
+
+    def grid_type(v):
+        dims = ds[v].dims
+        if 'nCells' in dims:
+            return 'cells'
+        if 'nVertices' in dims:
+            return 'vertices'
+        return '-'
+
+    MAX_LONGNAME = 45
+
+    rows = []
+    for v in variables:
+        attrs = ds[v].attrs
+        long_name = str(attrs.get('long_name', '') or '-')
+        if len(long_name) > MAX_LONGNAME:
+            long_name = long_name[:MAX_LONGNAME - 1] + '…'
+        units = str(attrs.get('units', '') or '-')
+        rows.append([v, long_name, units, grid_type(v), extra_dims(v)])
+
+    headers = ['Variable', 'Long name', 'Units', 'Grid', 'Extra dims']
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def make_rule(left, mid, right):
+        return left + mid.join('─' * (w + 2) for w in widths) + right
+
+    def make_row(cells):
+        return ('│ '
+                + ' │ '.join(c.ljust(widths[i]) for i, c in enumerate(cells))
+                + ' │')
+
+    lines = []
+    n = len(rows)
+    lines.append(f"\nAvailable plottable variables ({n}):\n")
+    lines.append(make_rule('┌', '┬', '┐'))
+    lines.append(make_row(headers))
+    lines.append(make_rule('├', '┼', '┤'))
+    for row in rows:
+        lines.append(make_row(row))
+    lines.append(make_rule('└', '┴', '┘'))
+    lines.append("\nPick one with: -v/--var <Variable>")
+    return '\n'.join(lines)
+
 def start_cartopy_map_axis(zorder=1):
 
     ax = plt.axes(projection=ccrs.PlateCarree())  # projection type
@@ -479,8 +564,9 @@ if __name__ == "__main__":
         help="File to save the MPAS plot",
     )
     parser.add_argument(
-        "-v", "--var", type=str, default='resolution',
-        help="Variable to be plotted",
+        "-v", "--var", type=str, default=None,
+        help="Variable to be plotted. If omitted, the script lists the"
+        + " available plottable variables and exits.",
     )
 
     parser.add_argument(
@@ -521,6 +607,13 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.infile):
         raise IOError('File does not exist: ' + args.infile)
+
+    # No target variable supplied: show the user what is available and exit.
+    if args.var is None:
+        ds = open_mpas_file(args.infile)
+        print("File:", args.infile)
+        print(format_variables_table(ds))
+        raise SystemExit(0)
 
     if args.grid in ['no', 'No', 'N', 'n']:
         plotEdge=False
