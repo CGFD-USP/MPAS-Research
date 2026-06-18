@@ -1,159 +1,88 @@
 #!/usr/bin/env bash
-
 #
-# Sources for all libraries used in this script can be found at
-# http://www2.mmm.ucar.edu/people/duda/files/mpas/sources/ 
+# Lean MPAS dependency build: PnetCDF only (+ optional MPICH).
 #
+# Rationale (per F. Barbosa's review of the previous install PR):
+#   MPAS v8 ships its own I/O layer (SMIOL) and uses it automatically whenever
+#   the PIO environment variable is unset. In that mode the *only* external I/O
+#   dependency is PnetCDF -- no PIO, NetCDF-C, NetCDF-Fortran, HDF5 or zlib.
+#   Compilers and MPI should come from the system / HPC module stack whenever
+#   possible (HPC sites usually ship MPI tuned for their interconnect). Building
+#   MPICH here is therefore OPTIONAL and disabled by default.
+#
+# Usage:
+#   # A) System / module MPI (preferred):
+#   #      module load openmpi      # or mpich, whatever the site provides
+#   #      bash mpas_lib_install.sh
+#   #
+#   # B) Build MPICH from the official source (no system MPI available):
+#   #      BUILD_MPICH=1 bash mpas_lib_install.sh
+#
+# All settings below can be overridden from the environment.
+#
+set -euo pipefail
 
-# Where to find sources for libraries - generally, the directory into which
-# you have downloaded the sources from the URL, above
-export LIBSRC=/sysdisk2/duda/sources
+# ---- configuration -------------------------------------------------
+LIBBASE="${MPAS_LIBS:-$HOME/mpas-build/libs}"      # install prefix
+SRCDIR="${MPAS_SRC:-$HOME/mpas-build/sources}"     # tarball download/extract dir
+BUILD_MPICH="${BUILD_MPICH:-0}"                    # 1 = build MPICH from source
+MPICH_VERSION="${MPICH_VERSION:-4.2.3}"            # see https://www.mpich.org/downloads/
+PNETCDF_VERSION="${PNETCDF_VERSION:-1.13.0}"       # see https://parallel-netcdf.github.io/
+JOBS="${JOBS:-4}"
 
-# Where to install libraries - this directory must be writable by you
-export LIBBASE=/sysdisk2/duda/mpas-libs
+mkdir -p "$LIBBASE" "$SRCDIR"
+export PATH="$LIBBASE/bin:$PATH"
+export LD_LIBRARY_PATH="$LIBBASE/lib:${LD_LIBRARY_PATH:-}"
 
-# Compilers
-export SERIAL_FC=gfortran
-export SERIAL_F77=gfortran
-export SERIAL_CC=gcc
-export SERIAL_CXX=g++
-export MPI_FC=mpifort
-export MPI_F77=mpifort
-export MPI_CC=mpicc
-export MPI_CXX=mpic++
+# gfortran >= 10 rejects the legacy mismatched-argument MPI calls by default;
+# this downgrades it to a warning so configure tests pass.
+export FFLAGS="${FFLAGS:-} -fallow-argument-mismatch"
+export FCFLAGS="${FCFLAGS:-} -fallow-argument-mismatch"
 
+# ---- optional: MPICH from the official source ----------------------
+if [ "$BUILD_MPICH" = "1" ]; then
+    echo "=== Building MPICH ${MPICH_VERSION} (https://www.mpich.org) ==="
+    tarball="mpich-${MPICH_VERSION}.tar.gz"
+    url="https://www.mpich.org/static/downloads/${MPICH_VERSION}/${tarball}"
+    [ -f "$SRCDIR/$tarball" ] || curl -fL -o "$SRCDIR/$tarball" "$url"
+    tar xzf "$SRCDIR/$tarball" -C "$SRCDIR"
+    pushd "$SRCDIR/mpich-${MPICH_VERSION}" >/dev/null
+    ./configure --prefix="$LIBBASE"
+    make -j "$JOBS"
+    make install
+    popd >/dev/null
+    rm -rf "$SRCDIR/mpich-${MPICH_VERSION}"
+fi
 
-export CC=$SERIAL_CC
-export CXX=$SERIAL_CXX
-export F77=$SERIAL_F77
-export FC=$SERIAL_FC
-unset F90  # This seems to be set by default on NCAR's Cheyenne and is problematic
-unset F90FLAGS
-export CFLAGS="-g"
-export FFLAGS="-g -fbacktrace"
-export FCFLAGS="-g -fbacktrace -fallow-argument-mismatch"
-export F77FLAGS="-g -fbacktrace -fallow-argument-mismatch"
+# ---- pick MPI compiler wrappers (system module OR the MPICH above) --
+export MPICC="${MPICC:-mpicc}"
+export MPICXX="${MPICXX:-mpicxx}"
+export MPIF77="${MPIF77:-mpif77}"
+export MPIF90="${MPIF90:-mpif90}"
+if ! command -v "$MPICC" >/dev/null || ! command -v "$MPIF90" >/dev/null; then
+    echo "ERROR: MPI wrappers ($MPICC / $MPIF90) not found on PATH." >&2
+    echo "       Load a system MPI module, or re-run with BUILD_MPICH=1." >&2
+    exit 1
+fi
+echo "[INFO] Using MPI: $(command -v "$MPIF90")"
 
-
-########################################
-# MPICH
-########################################
-tar xzvf ${LIBSRC}/mpich-3.3.1.tar.gz 
-cd mpich-3.3.1
-./configure --prefix=${LIBBASE}
-make -j 4
-#make check
+# ---- PnetCDF (the only required external I/O library) --------------
+echo "=== Building PnetCDF ${PNETCDF_VERSION} ==="
+tarball="pnetcdf-${PNETCDF_VERSION}.tar.gz"
+url="https://parallel-netcdf.github.io/Release/${tarball}"
+[ -f "$SRCDIR/$tarball" ] || curl -fL -o "$SRCDIR/$tarball" "$url"
+tar xzf "$SRCDIR/$tarball" -C "$SRCDIR"
+pushd "$SRCDIR/pnetcdf-${PNETCDF_VERSION}" >/dev/null
+./configure --prefix="$LIBBASE"          # picks up MPICC/MPIF77/MPIF90/MPICXX from env
+make -j "$JOBS"
 make install
-#make testing
-export PATH=${LIBBASE}/bin:$PATH
-export LD_LIBRARY_PATH=${LIBBASE}/lib:$LD_LIBRARY_PATH
-cd ..
-rm -rf mpich-3.3.1
+popd >/dev/null
+rm -rf "$SRCDIR/pnetcdf-${PNETCDF_VERSION}"
 
-########################################
-# zlib
-########################################
-tar xzvf ${LIBSRC}/zlib-1.2.11.tar.gz
-cd zlib-1.2.11
-./configure --prefix=${LIBBASE} --static
-make -j 4
-make install
-cd ..
-rm -rf zlib-1.2.11
-
-########################################
-# HDF5
-########################################
-tar xjvf ${LIBSRC}/hdf5-1.10.5.tar.bz2
-cd hdf5-1.10.5
-export FC=$MPI_FC
-export CC=$MPI_CC
-export CXX=$MPI_CXX
-./configure --prefix=${LIBBASE} --enable-parallel --with-zlib=${LIBBASE} --disable-shared
-make -j 4
-#make check
-make install
-cd ..
-rm -rf hdf5-1.10.5
-
-########################################
-# Parallel-netCDF
-########################################
-tar xzvf ${LIBSRC}/pnetcdf-1.12.2.tar.gz
-cd pnetcdf-1.12.2
-export CC=$SERIAL_CC
-export CXX=$SERIAL_CXX
-export F77=$SERIAL_F77
-export FC=$SERIAL_FC
-export MPICC=$MPI_CC
-export MPICXX=$MPI_CXX
-export MPIF77=$MPI_F77
-export MPIF90=$MPI_FC
-### Will also need gcc in path
-./configure --prefix=${LIBBASE}
-make -j 4
-#make check
-#make ptest
-#make testing
-make install
-export PNETCDF=${LIBBASE}
-cd ..
-rm -rf pnetcdf-1.12.2
-
-########################################
-# netCDF (C library)
-########################################
-tar xzvf ${LIBSRC}/netcdf-c-4.6.3.tar.gz
-cd netcdf-c-4.6.3
-export CPPFLAGS="-I${LIBBASE}/include"
-export LDFLAGS="-L${LIBBASE}/lib"
-export LIBS="-lhdf5_hl -lhdf5 -lz -ldl"
-export CC=$MPI_CC
-./configure --prefix=${LIBBASE} --disable-dap --enable-netcdf4 --enable-pnetcdf --enable-cdf5 --enable-parallel-tests --disable-shared
-make -j 4 
-#make check
-make install
-export NETCDF=${LIBBASE}
-cd ..
-rm -rf netcdf-c-4.6.3
-
-########################################
-# netCDF (Fortran interface library)
-########################################
-tar xzvf ${LIBSRC}/netcdf-fortran-4.5.2.tar.gz
-cd netcdf-fortran-4.5.2
-export FC=$MPI_FC
-export F77=$MPI_F77
-export LIBS="-lnetcdf -lpnetcdf ${LIBS}"
-./configure --prefix=${LIBBASE} --enable-parallel-tests --disable-shared
-make -j 4
-#make check
-make install
-cd ..
-rm -rf netcdf-fortran-4.5.2
-
-########################################
-# PIO
-########################################
-git clone https://github.com/NCAR/ParallelIO
-cd ParallelIO
-git checkout -b pio-2.5.8 pio2_5_8
-export PIOSRC=`pwd`
-cd ..
-mkdir pio
-cd pio
-export CC=$MPI_CC
-export FC=$MPI_FC
-cmake -DNetCDF_C_PATH=$NETCDF -DNetCDF_Fortran_PATH=$NETCDF -DPnetCDF_PATH=$PNETCDF -DHDF5_PATH=$NETCDF -DCMAKE_INSTALL_PREFIX=$LIBBASE -DPIO_USE_MALLOC=ON -DCMAKE_VERBOSE_MAKEFILE=1 -DPIO_ENABLE_TIMING=OFF $PIOSRC
-make
-#make check
-make install
-cd ..
-rm -rf pio ParallelIO
-export PIO=$LIBBASE
-
-########################################
-# Other environment vars needed by MPAS
-########################################
-export MPAS_EXTERNAL_LIBS="-L${LIBBASE}/lib -lhdf5_hl -lhdf5 -ldl -lz"
-export MPAS_EXTERNAL_INCLUDES="-I${LIBBASE}/include"
+echo
+echo "=== Done. Lean MPAS dependencies installed under: $LIBBASE ==="
+echo "Next steps:"
+echo "  source \"\$(dirname \"\$0\")/mpas_build_env.sh\""
+echo "  cd \"\$MPAS_ROOT\""
+echo "  make gnu CORE=init_atmosphere      # PIO unset -> MPAS uses bundled SMIOL"
+echo "  make clean CORE=atmosphere && make gnu CORE=atmosphere"

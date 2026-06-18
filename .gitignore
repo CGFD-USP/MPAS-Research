@@ -1,5 +1,8 @@
 # Ignore Files in the MPAS Direcory
 
+# Machine-specific install scripts (copies of the templates with local paths)
+*.local.sh
+
 # All pre-processed Fortran files in MPAS specific directories
 src/core_*/Registry_processed.xml
 src/core_*/*.f90

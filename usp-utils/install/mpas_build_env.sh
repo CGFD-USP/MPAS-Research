@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# Build environment for compiling MPAS against the lean dependency set built by
+# mpas_lib_install.sh (PnetCDF only). Source this before running `make`:
+#
+#   source usp-utils/install/mpas_build_env.sh
+#   cd "$MPAS_ROOT"
+#   make gnu CORE=init_atmosphere
+#   make clean CORE=atmosphere && make gnu CORE=atmosphere
+#
+# No PIO / NetCDF / HDF5: with PIO unset, MPAS v8 links its bundled SMIOL I/O
+# layer and only needs PnetCDF. MPI + compilers should come from the system /
+# HPC module stack; set MPI_HOME only if you built MPICH yourself.
+#
+# `make gnu` and `make gfortran` differ only in two compile-time diagnostic
+# flags in the gnu recipe (-std=f2008 -fimplicit-none); the produced binaries
+# are numerically identical. `make gnu` is the stricter (recommended) target.
+
+# --- configuration (override via environment before sourcing) -------
+: "${MPAS_LIBS:=$HOME/mpas-build/libs}"   # prefix where PnetCDF was installed
+: "${MPI_HOME:=}"                         # set ONLY for a self-built / non-system MPI
+
+# Self-built MPICH installed into $MPAS_LIBS, or a separate $MPI_HOME, on PATH.
+# For a system/module MPI: leave MPI_HOME empty and `module load` it beforehand.
+export PATH="$MPAS_LIBS/bin:$PATH"
+if [ -n "$MPI_HOME" ]; then
+    export PATH="$MPI_HOME/bin:$PATH"
+    export LD_LIBRARY_PATH="$MPI_HOME/lib:${LD_LIBRARY_PATH:-}"
+fi
+
+export PNETCDF="$MPAS_LIBS"
+unset PIO NETCDF                          # -> SMIOL path, no stray NetCDF linkage
+export LD_LIBRARY_PATH="$MPAS_LIBS/lib:${LD_LIBRARY_PATH:-}"
+
+echo "[INFO] MPAS lean env: PNETCDF=$PNETCDF  (PIO/NETCDF unset -> SMIOL I/O)"
+echo "[INFO] mpif90 -> $(command -v mpif90 || echo 'NOT FOUND - load a system MPI or set MPI_HOME')"
