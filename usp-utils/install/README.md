@@ -85,6 +85,31 @@ Common errors:
   leftover objects from an earlier build; run `make clean CORE=<core>` first, or
   add `AUTOCLEAN=true` to the `make` command.
 
+### Step 4 — run the model (same env, in EVERY new shell)
+
+The same `source` is required not only to **compile** but to **run**
+`init_atmosphere_model` / `atmosphere_model`: it puts the MPICH `mpiexec`/`mpirun`
+on `PATH` and the runtime libraries on `LD_LIBRARY_PATH`. Source it once per shell
+(a new terminal needs it again):
+
+```bash
+source /path/to/MPAS-Research/usp-utils/install/mpas_build_env.sh
+cd /path/to/MPAS-Research/runs/<your_run_dir>
+mpiexec -n 64 ./atmosphere_model            # or: nohup mpiexec -n 64 ./atmosphere_model &
+```
+
+Run errors:
+- `mpiexec: command not found` / `mpirun: command not found` — the env was not
+  sourced in this shell (new terminal, or you switched git branch — see caveat
+  below). Re-run the `source` line.
+
+> **Branch caveat.** This script is committed only on the `setup/installation`
+> branch, so `usp-utils/install/` is empty on other branches and the `source`
+> path vanishes there. Since the machine environment is the same regardless of
+> which branch you work on, keep a **branch-independent copy outside the repo**
+> (e.g. `~/mpas-build/mpas_build_env.sh`) and source that one instead — it
+> survives `git checkout`/`git clean`.
+
 ## Configuration
 
 Both scripts read overridable environment variables (with sensible defaults):
