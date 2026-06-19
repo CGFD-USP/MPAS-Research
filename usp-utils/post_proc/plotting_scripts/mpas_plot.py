@@ -299,15 +299,41 @@ def plot_cells_mpas(da, ds, ax, plotEdge=True, gridfile=None, **plot_kwargs):
         print (f"{grid_properties} found in dataset.")
         ds_grid = ds
     else:
-        print (f"{grid_properties} not found in dataset. "+ 
+        print (f"{grid_properties} not found in dataset. "+
                "Trying to recover them from additional grid file.")
+
+        # The data file (e.g. an sfc_update/history/diag file) lacks the mesh
+        # connectivity. The user must supply it through -gf/--gridfile.
+        if gridfile is None:
+            raise SystemExit(
+                "\nERROR: this file does not contain the mesh connectivity "
+                f"({', '.join(grid_properties)}), which is required to plot it.\n"
+                "       Supply a grid/static/init file with -gf/--gridfile, e.g.:\n"
+                "           -gf x1.10242.grid.nc\n"
+                "       (note: -g/--grid is the yes/no flag for drawing cell "
+                "edges, NOT the grid file).")
+
+        if not os.path.exists(gridfile):
+            raise SystemExit(
+                f"\nERROR: grid file passed with -gf/--gridfile does not exist:\n"
+                f"           {gridfile}")
+
         try:
             # Open additional grid file
             ds_grid = open_mpas_file(gridfile)
-            if set(grid_properties).issubset(set(ds_grid.keys())):
-                print (f"{grid_properties} found in additional grid file.")
-        except:
-            raise RuntimeError(f"Recovery of {grid_properties} failed.")
+        except Exception as err:
+            raise SystemExit(
+                f"\nERROR: could not open the grid file '{gridfile}' as a "
+                f"NetCDF dataset:\n           {err}")
+
+        if not set(grid_properties).issubset(set(ds_grid.keys())):
+            raise SystemExit(
+                f"\nERROR: the grid file '{gridfile}' does not contain the "
+                f"required mesh connectivity ({', '.join(grid_properties)}).\n"
+                "       Use a proper MPAS grid/static/init file (e.g. "
+                "x1.<nCells>.grid.nc).")
+
+        print (f"{grid_properties} found in additional grid file.")
 
     # ax = start_cartopy_map_axis()
     print("Generating grid plot and plotting variable. This may take a while...")
@@ -614,6 +640,16 @@ if __name__ == "__main__":
         print("File:", args.infile)
         print(format_variables_table(ds))
         raise SystemExit(0)
+
+    # Guard against the common mistake of passing the grid FILE to -g/--grid
+    # (which is only the yes/no switch for drawing cell edges). The grid file
+    # belongs in -gf/--gridfile.
+    if args.grid not in ['yes', 'Yes', 'Y', 'y', 'no', 'No', 'N', 'n']:
+        raise SystemExit(
+            f"\nERROR: -g/--grid only accepts yes/no (draw cell edges), but got "
+            f"'{args.grid}'.\n"
+            "       If you meant to pass a grid file, use -gf/--gridfile instead:\n"
+            f"           -gf {args.grid}")
 
     if args.grid in ['no', 'No', 'N', 'n']:
         plotEdge=False
