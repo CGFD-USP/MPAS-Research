@@ -1,6 +1,10 @@
-# MPAS build dependencies (lean PnetCDF-only setup)
+# MPAS model build — dependencies (lean PnetCDF-only setup)
 
-This directory holds a minimal toolchain for compiling MPAS-Atmosphere v8.
+A minimal toolchain for compiling and running MPAS-Atmosphere v8.
+
+> Setting up the **Python/Julia pre/post-processing tools** instead? See
+> [`environment_setup.md`](environment_setup.md). This file is only about
+> building and running the model.
 
 ## Why so few libraries?
 
@@ -100,15 +104,11 @@ mpiexec -n 64 ./atmosphere_model            # or: nohup mpiexec -n 64 ./atmosphe
 
 Run errors:
 - `mpiexec: command not found` / `mpirun: command not found` — the env was not
-  sourced in this shell (new terminal, or you switched git branch — see caveat
-  below). Re-run the `source` line.
+  sourced in this shell (e.g. a new terminal). Re-run the `source` line.
 
-> **Branch caveat.** This script is committed only on the `setup/installation`
-> branch, so `usp-utils/install/` is empty on other branches and the `source`
-> path vanishes there. Since the machine environment is the same regardless of
-> which branch you work on, keep a **branch-independent copy outside the repo**
-> (e.g. `~/mpas-build/mpas_build_env.sh`) and source that one instead — it
-> survives `git checkout`/`git clean`.
+> **Tip.** Since the build environment must be sourced in every new shell, you
+> may want a copy outside the repo (e.g. `~/mpas-build/mpas_build_env.sh`) and
+> source that one — it stays put across `git checkout` / `git clean`.
 
 ## Configuration
 

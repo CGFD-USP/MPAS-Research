@@ -16,8 +16,8 @@ WARNING="${YELLOW}[WARNING]${NC}"
 N=$(conda info --envs | grep '^cgfd-usp-mpas ' | wc -l)
 if [ $N == 0 ]; then
     echo -e "${INFO} Creating 'cgfd-usp-mpas' conda environment"
-    conda env create --name cgfd-usp-mpas --file=$SCRIPT_DIR/libs/cgfd-usp-mpas.yml
+    conda env create --name cgfd-usp-mpas --file=$SCRIPT_DIR/../libs/cgfd-usp-mpas.yml
 else
     echo -e "${INFO} 'cgfd-usp-mpas' conda environment already exists, updating it instead"
-    conda env update --name cgfd-usp-mpas --file=$SCRIPT_DIR/libs/cgfd-usp-mpas.yml --prune
+    conda env update --name cgfd-usp-mpas --file=$SCRIPT_DIR/../libs/cgfd-usp-mpas.yml --prune
 fi

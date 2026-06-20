@@ -2,7 +2,7 @@
 #
 # Lean MPAS dependency build: PnetCDF only (+ optional MPICH).
 #
-# Rationale (per F. Barbosa's review of the previous install PR):
+# Rationale:
 #   MPAS v8 ships its own I/O layer (SMIOL) and uses it automatically whenever
 #   the PIO environment variable is unset. In that mode the *only* external I/O
 #   dependency is PnetCDF -- no PIO, NetCDF-C, NetCDF-Fortran, HDF5 or zlib.
