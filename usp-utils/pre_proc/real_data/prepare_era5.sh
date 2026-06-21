@@ -2,7 +2,7 @@
 #
 # prepare_era5.sh — one-shot ERA5 atmospheric data for MPAS real-data init:
 # download pressure- and single-level GRIB (cdsapi) + convert to the WPS
-# intermediate file (GFS:YYYY-MM-DD_HH) that init_atmosphere reads.
+# intermediate file (ERA5:YYYY-MM-DD_HH) that init_atmosphere reads.
 #
 # Use for the scientific/downscaling pipeline (ERA5 atmosphere; pair with OISST
 # for SST via prepare_oisst.sh). ERA5 covers 1940 -> present.
@@ -47,9 +47,9 @@ pl="$era5dir/era5_pl_${ymd}${hh}.grib"
 sl="$era5dir/era5_sl_${ymd}${hh}.grib"
 [ -f "$pl" ] && [ -f "$sl" ] || { echo "ERROR: ERA5 GRIB not found in $era5dir" >&2; exit 1; }
 
-echo "[prepare_era5] convert -> WPS intermediate (GFS:)"
+echo "[prepare_era5] convert -> WPS intermediate (ERA5:)"
 run era5_to_intermediate.py --pl "$pl" --sl "$sl"
 
-echo "[prepare_era5] done. Set config_met_prefix='GFS' and the printed"
+echo "[prepare_era5] done. Set config_met_prefix='ERA5' and the printed"
 echo "               config_nfglevels in namelist.init_atmosphere; link the"
-echo "               GFS:* intermediate (and the *.static.nc) into the run dir."
+echo "               ERA5:* intermediate (and the *.static.nc) into the run dir."

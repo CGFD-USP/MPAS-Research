@@ -1,18 +1,18 @@
 # `real_data/` — GFS / ERA5 → WPS intermediate met files for MPAS
 
 Scripts to fetch meteorological data and turn it into the **WPS intermediate-format**
-file (`GFS:YYYY-MM-DD_HH`) that `init_atmosphere` reads to build the real-data
-`init.nc`. MPAS has no built-in ungrib, so this is done in Python with **pywinter**
-— no need to build WPS/ungrib.
+file (`GFS:` or `ERA5:` `YYYY-MM-DD_HH`) that `init_atmosphere` reads to build the
+real-data `init.nc`. MPAS has no built-in ungrib, so this is done in Python with
+**pywinter** — no need to build WPS/ungrib.
 
 ```
-download_gfs.py   →  GFS GRIB2    →  gfs_to_intermediate.py   ┐
-                                                              ├→  GFS:YYYY-MM-DD_HH
-download_era5.py  →  ERA5 GRIB    →  era5_to_intermediate.py  ┘
+download_gfs.py   →  GFS GRIB2    →  gfs_to_intermediate.py   →  GFS:YYYY-MM-DD_HH
+download_era5.py  →  ERA5 GRIB    →  era5_to_intermediate.py  →  ERA5:YYYY-MM-DD_HH
 ```
 
-The intermediate file keeps the `GFS:` prefix (= `config_met_prefix='GFS'`)
-regardless of the source, so the `init_atmosphere` setup is identical either way.
+Each source writes its own prefix — GFS → `GFS:`, ERA5 → `ERA5:` — which is the
+`config_met_prefix` you set in `namelist.init_atmosphere`. The field names and the
+rest of the setup are identical either way; only the prefix differs.
 This directory only produces that **met intermediate file** — running
 `init_atmosphere` with it (namelist, streams, linking `*.static.nc`, etc.) is covered
 by the model usage tutorial, not repeated here. Run these after the static fields
@@ -20,8 +20,9 @@ are ready (see `../static_fields/`).
 
 ## Which source? (data availability)
 
-Two products feed init_atmosphere: the **atmosphere** (3D state → `GFS:` intermediate,
-init case 7) and the **SST/sea-ice** lower boundary (→ `SST:` intermediate, init case 8,
+Two products feed init_atmosphere: the **atmosphere** (3D state → `GFS:`/`ERA5:`
+intermediate, init case 7) and the **SST/sea-ice** lower boundary (→ `SST:`
+intermediate, init case 8,
 see "SST / sea-ice update").
 
 **Atmosphere:**
@@ -78,7 +79,7 @@ One-shot wrappers (download + convert in one call, inside the conda env):
 | Wrapper | Covers |
 |---------|--------|
 | `prepare_gfs.sh` | GFS atmosphere and/or SST — `--product atm` (default), `sst`, or `both` (one download, both products). |
-| `prepare_era5.sh` | ERA5 atmosphere (download pl+sl → `GFS:` intermediate). |
+| `prepare_era5.sh` | ERA5 atmosphere (download pl+sl → `ERA5:` intermediate). |
 | `prepare_oisst.sh` | OISST SST over a date range — observed (default) or `--climatology` (→ daily `SST:` intermediates). |
 
 ## Dependencies
@@ -131,16 +132,21 @@ Key options:
   `--fields {full,sst}` (`sst` = small surface-only download for SST update files),
   `--outdir`.
 - `download_era5.py`: `--date YYYY-MM-DD`, `--time HH`, `--area N W S E` (default
-  global), `--outdir`.
+  global), `--outdir`. **`--area` subsets only the *download*, not the simulated
+  region** (that is the mesh): use it for a regional run to keep a long LBC series
+  small, sized as the regional mesh extent **+ a margin** (order `N W S E`, degrees,
+  lon −180..180; W/E negative over Brazil). For a global mesh, omit it. See
+  [hindcast_regional](recipes/hindcast_regional.md) for a worked example (single
+  month to multiple years).
 - `download_oisst.py` / `oisst_to_intermediate.py`: `--start`/`--end` date range,
   `--hour HH`, `--outdir`.
 - `oisst_clim_to_intermediate.py` (climatology): `--start`/`--end` target dates,
   `--hour HH`, `--outdir` (no download — reads the LTM over OPeNDAP).
-- converters: `--outdir`, `--prefix` (default `GFS` for atmosphere, `SST` for SST);
-  GFS uses `--grib`, ERA5 uses `--pl`/`--sl`.
+- converters: `--outdir`, `--prefix` (default `GFS` for the GFS converter, `ERA5`
+  for the ERA5 converter, `SST` for SST); GFS uses `--grib`, ERA5 uses `--pl`/`--sl`.
 
-The converter sets the date tag from the data's valid time, so the output name
-(`GFS:YYYY-MM-DD_HH`) is what `config_start_time` must match.
+The converter sets the date tag from the data's valid time, so the date part of the
+output name (`<prefix>:YYYY-MM-DD_HH`) is what `config_start_time` must match.
 
 ## Verify the init.nc (recommended after every run)
 

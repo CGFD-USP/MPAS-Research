@@ -14,7 +14,7 @@ daily analysis for SST. (For a recent date, 2021-03-23+, GFS analysis works too.
 
 ## 1. Atmosphere initial conditions
 ```sh
-./prepare_era5.sh --date 2010-01-01 --time 00          # -> GFS:2010-01-01_00
+./prepare_era5.sh --date 2010-01-01 --time 00          # -> ERA5:2010-01-01_00
 #   recent date alternative:
 # ./prepare_gfs.sh --date 2023-09-10 --cycle 00 --product atm
 ```
@@ -27,7 +27,8 @@ For a "typical" period rather than a specific year, use `--climatology` instead 
 observed range. `config_fg_interval` (case-8 namelist) sets how often MPAS reads SST.
 
 ## Hand-off to the model
-- `GFS:` → `init_atmosphere` **case 7** (global `*.static.nc`) → `x1.*.init.nc`.
+- `ERA5:` (or `GFS:` for the recent-date alternative) → `init_atmosphere` **case 7**
+  (global `*.static.nc`) → `x1.*.init.nc`.
 - `SST:` → `init_atmosphere` **case 8** → `x1.*.sfc_update.nc`; model `config_sst_update`
   + the `sfc_update` stream. See README *SST / sea-ice update*.
 - **Verify the `init.nc`** (README *Verify the init.nc*) — this catches unit/interpolation

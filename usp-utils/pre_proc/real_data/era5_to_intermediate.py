@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 era5_to_intermediate.py — convert ERA5 GRIB files (from download_era5.py) into a
-WPS intermediate-format file (e.g. GFS:2014-09-10_00) that MPAS init_atmosphere
-reads for real-data initialization (config_met_prefix='GFS').
+WPS intermediate-format file (e.g. ERA5:2014-09-10_00) that MPAS init_atmosphere
+reads for real-data initialization (config_met_prefix='ERA5').
 
 This is the ERA5 counterpart of gfs_to_intermediate.py (same pywinter output,
-same intermediate field names), for dates the GFS archive does not cover.
+same intermediate field names), for dates the GFS archive does not cover. The
+only difference is the file prefix: ERA5 writes 'ERA5:', GFS writes 'GFS:', so
+set config_met_prefix to match the source you used.
 
 Run inside the conda env that has cfgrib + pywinter:
     conda run -n cgfd-usp-mpas python era5_to_intermediate.py \
@@ -80,8 +82,8 @@ def main() -> int:
     ap.add_argument("--sl", required=True, help="ERA5 single-level GRIB file")
     ap.add_argument("--outdir", default=None,
                     help="Output dir (default: the --pl file's directory)")
-    ap.add_argument("--prefix", default="GFS",
-                    help="Intermediate prefix (config_met_prefix; keep 'GFS')")
+    ap.add_argument("--prefix", default="ERA5",
+                    help="Intermediate prefix (config_met_prefix; default 'ERA5')")
     args = ap.parse_args()
 
     pl, sl = Path(args.pl), Path(args.sl)
