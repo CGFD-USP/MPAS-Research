@@ -80,6 +80,7 @@ One-shot wrappers (download + convert in one call, inside the conda env):
 |---------|--------|
 | `prepare_gfs.sh` | GFS atmosphere and/or SST — `--product atm` (default), `sst`, or `both` (one download, both products). |
 | `prepare_era5.sh` | ERA5 atmosphere (download pl+sl → `ERA5:` intermediate). |
+| `prepare_era5_series.sh` | ERA5 `ERA5:` series over a date window (the LBC series of a month/year/years). Resumable, fault-tolerant, `nohup`-friendly, optional `--jobs`. |
 | `prepare_oisst.sh` | OISST SST over a date range — observed (default) or `--climatology` (→ daily `SST:` intermediates). |
 
 ## Dependencies
