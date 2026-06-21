@@ -216,15 +216,30 @@ tasks). Both grid scripts already produce the graph file:
 - global meshes  → `$MPAS_ROOT/grids/<output>/<output>_graph.info`
 - regional meshes → `$MPAS_ROOT/grids/<output>/<output>.graph.info`
 
-Partition it, e.g. for 96 tasks:
+Partition it, e.g. for 96 tasks (`<output>_graph.info` for global meshes,
+`<output>.graph.info` for regional ones):
 
 ```bash
-# global mesh
-gpmetis $MPAS_ROOT/grids/<output>/<output>_graph.info 96
-# regional mesh
 gpmetis $MPAS_ROOT/grids/<output>/<output>.graph.info 96
 # -> creates <...>.graph.info.part.96
 ```
+
+**Recommended (MPAS docs).** For production runs use the higher-quality
+options recommended by MPAS:
+
+```bash
+gpmetis -minconn -contig -niter=200 \
+        $MPAS_ROOT/grids/<output>/<output>.graph.info 96
+```
+
+- `-contig` — each partition is a single connected block (better halo
+  exchange);
+- `-minconn` — minimise how many neighbour partitions each block talks to
+  (less MPI communication);
+- `-niter=200` — more refinement iterations for a better-quality partition.
+
+They are not required for MPAS to run (plain `gpmetis` works), but they
+improve parallel performance and are worth it at scale.
 
 ### Install (one-time, per machine)
 
