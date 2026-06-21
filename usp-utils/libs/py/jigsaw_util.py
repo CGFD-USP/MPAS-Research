@@ -11,6 +11,7 @@
 import numpy as np
 import argparse
 import os
+import glob
 import numpy as np
 import subprocess
 import matplotlib.pyplot as plt
@@ -19,6 +20,12 @@ import matplotlib.pyplot as plt
 #from scipy import interpolate
 
 import jigsawpy as jig
+
+import xarray
+
+from mpas_tools.mesh.creation.jigsaw_to_netcdf import jigsaw_to_netcdf
+from mpas_tools.mesh.conversion import convert
+from mpas_tools.io import write_netcdf
 
 def cellWidthVsLatLon(r=70):
     """
@@ -285,6 +292,217 @@ def jigsaw_gen_icos_grid(basename="mesh", level=4):
     opts.optm_iter = +5120
     opts.optm_qtol = +1.0E-08
     
-    jig.cmd.icosahedron(opts, level, icos)    
+    jig.cmd.icosahedron(opts, level, icos)
 
-    return opts.mesh_file 
+    return opts.mesh_file
+
+
+def _cleanup_intermediate(out_basepath, out_dir):
+    """Remove the intermediary files produced while building a mesh."""
+    for ext in ('.msh', '.jig', '-MESH.msh', '-HFUN.msh', '_triangles.nc'):
+        f = out_basepath + ext
+        if os.path.exists(f):
+            os.remove(f)
+
+    # MPAS-Tools 'convert' leaves a temporary working sub-directory behind
+    leftovers = glob.glob(out_dir + '/*/graph.info')
+    if leftovers:
+        del_dir = os.path.dirname(leftovers[0])
+        for f in ('graph.info', 'mesh_in.nc', 'mesh_out.nc'):
+            path = os.path.join(del_dir, f)
+            if os.path.exists(path):
+                os.remove(path)
+        os.removedirs(del_dir)
+
+
+def build_global_mesh(opt, out_basepath, out_dir, out_filename,
+                      r=30, l=150, rad=50, tr=600,
+                      clon=0.0, clat=0.0, plots=False):
+    """
+    Build a global MPAS mesh and write it to MPAS NetCDF format.
+
+    This is the full jigsaw -> NetCDF -> MPAS-conversion pipeline that used to
+    live inside ``create_spherical_grid.py``. It was moved here so that other
+    scripts (e.g. the regional mesh creator) can reuse it without duplicating
+    code.
+
+    Parameters
+    ----------
+    opt : str
+        Grid type: "unif" (uniform), "icos" (icosahedral) or "localref"
+        (locally refined around clon/clat).
+    out_basepath : str
+        Base path (no extension) for the intermediary jigsaw/graph files.
+    out_dir : str
+        Output directory (already created by the caller).
+    out_filename : str
+        Final MPAS NetCDF mesh file to write.
+    r : float
+        Grid spacing of the high-resolution area in km.
+    l : float
+        Global (low-resolution) grid spacing in km for "localref"; for "icos"
+        it is interpreted as the refinement level.
+    rad : float
+        Radius of the high-resolution area in km ("localref" only).
+    tr : float
+        Transition-zone radius in km ("localref" only).
+    clon, clat : float
+        Centre of the refinement, in degrees ("localref" only).
+    plots : bool
+        If True, show diagnostic plots of the resolution field.
+
+    Returns
+    -------
+    str
+        Path to the MPAS NetCDF mesh that was written (``out_filename``).
+    """
+    if opt in ("unif", "localref"):
+        if opt == "unif":
+            cellWidth, lon, lat = cellWidthVsLatLon(r)
+        else:  # localref
+            cellWidth, lon, lat = localrefVsLatLon(
+                r, l=l, radius_high=rad, transition_radius=tr,
+                clon=clon, clat=clat, p=plots)
+        mesh_file = jigsaw_gen_sph_grid(cellWidth, lon, lat,
+                                        basename=out_basepath)
+
+    elif opt == "icos":
+        level = int(l)
+        if level > 11:
+            print("Please provide a reasonable refinment level - from 1 to 15."
+                  " Current value too large ", level)
+            print(" Setting level to 4")
+            level = 4
+        mesh_file = jigsaw_gen_icos_grid(basename=out_basepath, level=level)
+
+    else:
+        raise ValueError("Unknown grid option: " + repr(opt))
+
+    # Convert jigsaw mesh to netcdf
+    jigsaw_to_netcdf(msh_filename=mesh_file,
+                     output_name=out_basepath + '_triangles.nc',
+                     on_sphere=True, sphere_radius=1.0)
+
+    # Convert to MPAS grid specific format
+    write_netcdf(
+        convert(xarray.open_dataset(out_basepath + '_triangles.nc'),
+                dir=out_dir,
+                graphInfoFileName=out_basepath + "_graph.info"),
+        out_filename)
+
+    # Clean-up intermediary files
+    _cleanup_intermediate(out_basepath, out_dir)
+
+    return out_filename
+
+
+def resolve_plot_path(plot_out, out_dir, out_base):
+    """
+    Decide where to save the resolution plot.
+
+    - ``plot_out`` falsy            -> next to the grid: out_dir/<out_base>_resolution.png
+    - ``plot_out`` a directory      -> <plot_out>/<out_base>_resolution.png
+    - ``plot_out`` a file path      -> that exact path
+    """
+    default_name = out_base + "_resolution.png"
+    if not plot_out:
+        return os.path.join(out_dir, default_name)
+    if os.path.isdir(plot_out) or plot_out.endswith(os.sep):
+        return os.path.join(plot_out, default_name)
+    return plot_out
+
+
+def plot_resolution(grid_file, out_png, states=False):
+    """
+    Quick-look plot of the cell resolution (km) of any MPAS mesh.
+
+    Draws the cell centres coloured by their approximate spacing, so you can
+    eyeball the mesh extent and confirm the resolution. Works for both global
+    and regional meshes.
+
+    If cartopy is available it adds coastlines and country borders (and state
+    borders when ``states=True``, useful for regional meshes). It degrades
+    gracefully to a plain scatter if cartopy is missing or its map data cannot
+    be downloaded (e.g. offline).
+
+    Parameters
+    ----------
+    grid_file : str
+        MPAS mesh NetCDF (a global ``*.nc`` or a regional ``*.grid.nc``).
+    out_png : str
+        Output image path.
+    states : bool
+        Also draw state/province borders (recommended for regional meshes).
+    """
+    from netCDF4 import Dataset
+
+    ds = Dataset(grid_file)
+    lat = np.degrees(ds.variables['latCell'][:])
+    lon = np.degrees(ds.variables['lonCell'][:])
+    lon = np.where(lon > 180.0, lon - 360.0, lon)
+
+    # Approx. resolution from cell area. Meshes here live on a unit sphere
+    # (sphere_radius=1), so scale areas up to the real Earth before converting.
+    area = ds.variables['areaCell'][:]
+    sphere_radius = float(getattr(ds, 'sphere_radius', 1.0))
+    earth_radius_m = 6371220.0 if sphere_radius == 1.0 else 1.0
+    area_km2 = (area / 1.0e6) * earth_radius_m ** 2
+    resolution_km = 2.0 * np.sqrt(area_km2 / np.pi)
+    ds.close()
+
+    try:
+        import cartopy.crs as ccrs
+        import cartopy.feature as cfeature
+    except ImportError:
+        ccrs = None
+
+    if ccrs is not None:
+        proj = ccrs.PlateCarree()
+        fig, ax = plt.subplots(figsize=(8, 7), subplot_kw={'projection': proj})
+        sc = ax.scatter(lon, lat, c=resolution_km, s=4, cmap="viridis",
+                        transform=proj)
+
+        # Frame the data: whole globe if it spans (almost) everything,
+        # otherwise zoom to the mesh with a small margin.
+        span_lon = float(lon.max() - lon.min())
+        span_lat = float(lat.max() - lat.min())
+        if span_lon > 350.0 and span_lat > 170.0:
+            ax.set_global()
+        else:
+            mlon = max(1.0, 0.05 * span_lon)
+            mlat = max(1.0, 0.05 * span_lat)
+            ax.set_extent([lon.min() - mlon, lon.max() + mlon,
+                           lat.min() - mlat, lat.max() + mlat], crs=proj)
+
+        # Map details (downloaded on first use; skip silently if unavailable).
+        try:
+            ax.coastlines(resolution='50m', linewidth=0.6)
+            ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+            if states:
+                ax.add_feature(cfeature.STATES, linewidth=0.3,
+                               edgecolor='gray')
+        except Exception as exc:
+            print("WARNING: could not add cartopy map features (%s); "
+                  "plotting points only." % exc)
+
+        gl = ax.gridlines(draw_labels=True, linewidth=0.3, color='gray',
+                          alpha=0.5)
+        gl.top_labels = False
+        gl.right_labels = False
+    else:
+        print("WARNING: cartopy not available; plotting a plain scatter "
+              "(no coastlines/borders).")
+        fig, ax = plt.subplots(figsize=(8, 7))
+        sc = ax.scatter(lon, lat, c=resolution_km, s=4, cmap="viridis")
+        ax.set_xlabel("longitude")
+        ax.set_ylabel("latitude")
+        ax.set_aspect("equal")
+
+    cb = fig.colorbar(sc, ax=ax, shrink=0.8)
+    cb.set_label("cell resolution (km)")
+    ax.set_title(os.path.basename(grid_file))
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return out_png
