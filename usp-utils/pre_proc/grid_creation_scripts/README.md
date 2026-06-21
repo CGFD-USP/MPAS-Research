@@ -7,7 +7,8 @@ front-ends; the actual mesh logic lives in the shared modules under
 ## Setup (read first)
 
 These scripts run in the `cgfd-usp-mpas` conda env (it provides `jigsawpy`,
-`mpas_tools`, the `jigsaw` binary and, for regional meshes, `create_region`).
+`mpas_tools`, the `jigsaw` binary, `create_region` for regional meshes, and
+`gpmetis` for partitioning — see section 3).
 Before running, activate it and source the usp-utils environment so the
 libraries are on `PYTHONPATH` and `MPAS_ROOT` is defined:
 
@@ -202,6 +203,38 @@ pip install -e .
 
 If `create_region` is missing, `create_regional_grid.py` stops with a message
 pointing here.
+
+---
+
+## 3. Partitioning for parallel runs (`gpmetis`)
+
+To run MPAS in parallel you must split the mesh into one block per MPI task.
+That is done with **`gpmetis`** (from METIS), which reads the mesh's
+`graph.info` and writes a `graph.info.part.<N>` file (`N` = number of MPI
+tasks). Both grid scripts already produce the graph file:
+
+- global meshes  → `$MPAS_ROOT/grids/<output>/<output>_graph.info`
+- regional meshes → `$MPAS_ROOT/grids/<output>/<output>.graph.info`
+
+Partition it, e.g. for 96 tasks:
+
+```bash
+# global mesh
+gpmetis $MPAS_ROOT/grids/<output>/<output>_graph.info 96
+# regional mesh
+gpmetis $MPAS_ROOT/grids/<output>/<output>.graph.info 96
+# -> creates <...>.graph.info.part.96
+```
+
+### Install (one-time, per machine)
+
+`gpmetis` ships with the conda-forge `metis` package:
+
+```bash
+conda install -n cgfd-usp-mpas -c conda-forge metis
+```
+
+(Removes with `conda remove -n cgfd-usp-mpas metis`.)
 
 ---
 
