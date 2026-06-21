@@ -183,7 +183,7 @@ Both converters emit the same intermediate field names (WPS GFS Vtable):
 | terrain height      | `SOILHGT` | 2D            | HGT sfc   | z(sfc) / g0 |
 | skin temperature    | `SKINTEMP`| 2D            | TMP sfc   | skt |
 | land-sea mask       | `LANDSEA` | 2D            | LAND      | lsm |
-| sea-ice fraction    | `SEAICE`  | 2D            | ICEC      | siconc |
+| sea-ice fraction    | `SEAICE`  | 2D            | ICEC      | ci (a.k.a. siconc) |
 | snow water equiv.   | `SNOW`    | 2D            | WEASD     | sd × 1000 |
 | soil temperature    | `ST<tag>` | 2D (4 layers) | TSOIL     | stl1–4 |
 | soil moisture       | `SM<tag>` | 2D (4 layers) | SOILW     | swvl1–4 |

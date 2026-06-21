@@ -44,14 +44,16 @@ ISOBARIC = {
     "v": ("VV", None),
     "r": ("RH", None),
 }
-# 2D surface (typeOfLevel='surface'): shortName -> (intermediate name, transform)
+# 2D surface (typeOfLevel='surface'): intermediate name -> (shortName aliases, transform).
+# Aliases cover ERA5 GRIB naming differences across CDS deliveries (e.g. sea-ice
+# cover comes as 'ci' or 'siconc').
 SURFACE = {
-    "sp": ("PSFC", None),
-    "skt": ("SKINTEMP", None),
-    "z": ("SOILHGT", lambda a: a / G0),
-    "lsm": ("LANDSEA", None),
-    "siconc": ("SEAICE", None),
-    "sd": ("SNOW", lambda a: a * 1000.0),  # m w.e. -> kg m-2
+    "PSFC": (["sp"], None),
+    "SKINTEMP": (["skt"], None),
+    "SOILHGT": (["z"], lambda a: a / G0),
+    "LANDSEA": (["lsm"], None),
+    "SEAICE": (["ci", "siconc"], None),
+    "SNOW": (["sd"], lambda a: a * 1000.0),  # m w.e. -> kg m-2
 }
 # Soil layers: ERA5 shortNames and the matching WPS depth tags (top-bottom, cm)
 SOIL_T = ["stl1", "stl2", "stl3", "stl4"]
@@ -66,14 +68,27 @@ def _open(path, **keys):
     )
 
 
-def _open_var(path, sn, **keys):
-    """Open a single variable by shortName; return the DataArray or None."""
-    try:
-        ds = _open(path, shortName=sn, **keys)
-    except Exception as e:  # noqa: BLE001
-        print(f"[WARN] could not read {sn}: {e}")
-        return None
-    return ds[sn] if sn in ds else None
+def _open_var(path, shortnames, **keys):
+    """Open the first available variable among shortnames; return DataArray or None.
+
+    shortnames may be a single shortName or a list of aliases — ERA5 GRIB names
+    vary across CDS deliveries (e.g. sea-ice cover is 'ci' here but 'siconc'
+    elsewhere), so try each and return the first that opens and is present.
+    """
+    for sn in ([shortnames] if isinstance(shortnames, str) else shortnames):
+        try:
+            ds = _open(path, shortName=sn, **keys)
+        except Exception:  # noqa: BLE001
+            continue
+        if sn in ds:
+            return ds[sn]
+        # cfgrib may name the variable by its CF name, not the GRIB shortName
+        # (e.g. shortName 'ci' -> variable 'siconc'); the shortName+typeOfLevel
+        # filter isolates a single field, so return it.
+        dvars = list(ds.data_vars)
+        if len(dvars) == 1:
+            return ds[dvars[0]]
+    return None
 
 
 def main() -> int:
@@ -129,18 +144,22 @@ def main() -> int:
 
     # --- 2D surface (open each var individually to avoid cfgrib hypercube clashes) ---
     print(f"[INFO] Reading {sl} (single levels)")
-    for sn, (name, fn) in SURFACE.items():
-        da = _open_var(sl, sn, typeOfLevel="surface")
+    for name, (snames, fn) in SURFACE.items():
+        da = _open_var(sl, snames, typeOfLevel="surface")
         if da is not None:
             a = arr2d(da.values)
             variables.append(pw.V2d(name, fn(a) if fn else a))
         else:
-            print(f"[WARN] surface field missing: {sn}")
-    msl = _open_var(sl, "msl", typeOfLevel="meanSea")
+            print(f"[WARN] surface field missing: {name} ({'/'.join(snames)})")
+    # ERA5 mean sea level pressure: typeOfLevel is 'surface' in the CDS GRIB, but
+    # some deliveries label it 'meanSea' — try both.
+    msl = _open_var(sl, "msl", typeOfLevel="surface")
+    if msl is None:
+        msl = _open_var(sl, "msl", typeOfLevel="meanSea")
     if msl is not None:
         variables.append(pw.V2d("PMSL", arr2d(msl.values)))
     else:
-        print("[WARN] surface field missing: msl")
+        print("[WARN] surface field missing: msl (PMSL)")
 
     # --- Soil layers (stack the 4 ERA5 layers; pywinter Vsl -> ST/SM<tag>) ---
     st = [_open_var(sl, s, typeOfLevel="depthBelowLandLayer") for s in SOIL_T]
