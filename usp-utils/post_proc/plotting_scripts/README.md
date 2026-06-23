@@ -30,6 +30,10 @@ All input files are expanded into a single, ordered **timeline** of
 single-step files (`history.*.nc`) **or** held in one multi-step file
 (`x1.*.sfc_update.nc`).
 
+> ⚠️ **Always quote glob patterns** — `-f "history.*.nc"` — so the script (not
+> the shell) expands them. Unquoted, the shell expands the wildcard and only the
+> first file reaches `-f`. The pattern is glob-expanded and time-sorted internally.
+
 Inspect it:
 
 ```bash
@@ -108,6 +112,49 @@ python mpas_viz.py -f "history.*.nc" -v surface_pressure \
 python mpas_viz.py -f "history.*.nc" --sum-vars "rainc+rainnc" -o total_precip.mp4
 python mpas_viz.py -f "history.*.nc" --sum-vars "rainc+rainnc" --deaccumulate -o precip_rate.mp4
 ```
+
+---
+
+## Recommended workflow: animate a run directory
+
+To animate many output files from a run (e.g. `diag.*.nc` or `history.*.nc`),
+build it up incrementally. Replace the placeholders:
+
+- `<RUN_DIR>` — run output directory (e.g. `runs/meqbr_5km`)
+- `<PREFIX>`  — file family to animate: `diag` or `history`
+- `<MESH>`    — mesh basename used for the grid file (e.g. `meqbr_05km`)
+- `<VAR>`     — variable to animate (e.g. `mslp`); discover it in step 2
+
+```bash
+# 1. Inspect the timeline — how many frames, in what order
+python mpas_viz.py -f "<RUN_DIR>/<PREFIX>.*.nc" --list-times
+
+# 2. List plottable variables (point at any single file)
+python mpas_viz.py -f "<RUN_DIR>/<PREFIX>.<TIMESTAMP>.nc"
+
+# 3. TEST on a short sub-range first (5 frames) to check var/cmap/zoom/timing
+python mpas_viz.py -f "<RUN_DIR>/<PREFIX>.*.nc" -v <VAR> \
+    -gf <RUN_DIR>/<MESH>.static.nc \
+    --tstart 0 --tend 4 -g no -j 4 \
+    -o /tmp/<VAR>_test.mp4
+
+# 4. Full animation (parallel, no cell edges)
+python mpas_viz.py -f "<RUN_DIR>/<PREFIX>.*.nc" -v <VAR> \
+    -gf <RUN_DIR>/<MESH>.static.nc \
+    -g no -j -1 --fps 8 \
+    -o <RUN_DIR>/<VAR>_anim.mp4
+```
+
+Notes:
+
+- **Quote the glob** (`"<RUN_DIR>/<PREFIX>.*.nc"`) — see the time-model warning above.
+- **`-gf` is required** when `diag`/`history` files lack mesh connectivity; point
+  it at the run's `*.static.nc` / `*.init.nc` / `*.grid.nc` (the static/init file
+  also carries `landmask` for `-ml yes`).
+- **Mind the cost on fine meshes.** Rendering is one fill per cell per frame, so a
+  high-resolution mesh × many frames can take hours. Always run the short test
+  range first, keep `-g no`, use `-j`, and consider a
+  `-lat_min/-lat_max/-lon_min/-lon_max` box or lower `--dpi` for previews.
 
 ## Options
 
