@@ -8,8 +8,12 @@ Click to place polygon vertices on a cartopy map; the tool writes a
     python create_regional_grid.py -r 30 -l 200 \\
            --shape polygon --polygon-file <output> -o my_region
 
+The map starts on the whole world; zoom in to your region of interest.
+
 Controls
 --------
+    scroll wheel  zoom in / out (centred on the cursor)
+    toolbar       pan / zoom-rectangle (navigating does not add vertices)
     left click    add a vertex
     right click   undo the last vertex
     'c'           clear all vertices
@@ -95,10 +99,20 @@ class RegionDrawer:
         canvas = ax.figure.canvas
         canvas.mpl_connect('button_press_event', self.on_click)
         canvas.mpl_connect('key_press_event', self.on_key)
+        canvas.mpl_connect('scroll_event', self.on_scroll)
         self._update_title()
+
+    def _toolbar_active(self):
+        """True while the nav-toolbar pan/zoom tool is engaged."""
+        tb = getattr(self.ax.figure.canvas, 'toolbar', None)
+        return bool(getattr(tb, 'mode', ''))
 
     def on_click(self, event):
         if event.inaxes != self.ax or event.xdata is None:
+            return
+        # Ignore clicks while panning/zooming with the toolbar, so navigating
+        # the map does not drop stray vertices.
+        if self._toolbar_active():
             return
         if event.button == 1:            # left -> add vertex
             self.lons.append(float(event.xdata))
@@ -108,6 +122,26 @@ class RegionDrawer:
                 self.lons.pop()
                 self.lats.pop()
         self._redraw()
+
+    def on_scroll(self, event):
+        """Zoom in/out with the mouse wheel, keeping the cursor point fixed."""
+        if event.inaxes != self.ax or event.xdata is None:
+            return
+        scale = 1.0 / 1.3 if event.button == 'up' else 1.3  # up = zoom in
+        x0, x1, y0, y1 = self.ax.get_extent(crs=PLATE)
+        xc, yc = event.xdata, event.ydata
+        # scale width/height about the cursor
+        nx0 = xc - (xc - x0) * scale
+        nx1 = xc + (x1 - xc) * scale
+        ny0 = yc - (yc - y0) * scale
+        ny1 = yc + (y1 - yc) * scale
+        # clamp to the world and keep a sane minimum size
+        nx0, nx1 = max(-180.0, nx0), min(180.0, nx1)
+        ny0, ny1 = max(-90.0, ny0), min(90.0, ny1)
+        if nx1 - nx0 < 0.5 or ny1 - ny0 < 0.5:
+            return
+        self.ax.set_extent([nx0, nx1, ny0, ny1], crs=PLATE)
+        self.ax.figure.canvas.draw_idle()
 
     def on_key(self, event):
         if event.key == 'enter':
@@ -163,8 +197,12 @@ def main(args):
               "or --backend QtAgg.")
         sys.exit(1)
 
-    ax.set_extent([args.lon_min, args.lon_max, args.lat_min, args.lat_max],
-                  crs=PLATE)
+    # Whole world by default; zoom in (mouse wheel or toolbar) to your region.
+    if None in (args.lat_min, args.lat_max, args.lon_min, args.lon_max):
+        ax.set_global()
+    else:
+        ax.set_extent([args.lon_min, args.lon_max, args.lat_min, args.lat_max],
+                      crs=PLATE)
     ax.add_feature(cfeature.LAND, facecolor='#f3efe6')
     ax.add_feature(cfeature.OCEAN, facecolor='#dbe9f6')
     ax.coastlines('50m', linewidth=0.6)
@@ -175,8 +213,9 @@ def main(args):
     gl.right_labels = False
 
     drawer = RegionDrawer(ax, args.output)
-    print("Draw the region: left-click add, right-click undo, 'c' clear, "
-          "enter save, esc quit.")
+    print("Draw the region: scroll = zoom, toolbar = pan/zoom rectangle, "
+          "left-click = add,\nright-click = undo, 'c' = clear, enter = save, "
+          "esc = quit.")
     plt.show()
 
     if not drawer.saved:
@@ -201,18 +240,19 @@ if __name__ == '__main__':
              "the tool tries TkAgg then QtAgg.",
         metavar="STR")
 
-    # Initial map view (pan/zoom with the toolbar afterwards).
-    parser.add_argument("--lat-min", dest="lat_min", default=-60.0, type=float,
-                        help="Initial map south edge (default: -60)",
+    # Optional initial map view. By default the map starts on the whole world;
+    # zoom in (mouse wheel or toolbar) to your region of interest.
+    parser.add_argument("--lat-min", dest="lat_min", default=None, type=float,
+                        help="Initial map south edge (default: whole world)",
                         metavar="FLOAT")
-    parser.add_argument("--lat-max", dest="lat_max", default=20.0, type=float,
-                        help="Initial map north edge (default: 20)",
+    parser.add_argument("--lat-max", dest="lat_max", default=None, type=float,
+                        help="Initial map north edge (default: whole world)",
                         metavar="FLOAT")
-    parser.add_argument("--lon-min", dest="lon_min", default=-95.0, type=float,
-                        help="Initial map west edge (default: -95)",
+    parser.add_argument("--lon-min", dest="lon_min", default=None, type=float,
+                        help="Initial map west edge (default: whole world)",
                         metavar="FLOAT")
-    parser.add_argument("--lon-max", dest="lon_max", default=-20.0, type=float,
-                        help="Initial map east edge (default: -20)",
+    parser.add_argument("--lon-max", dest="lon_max", default=None, type=float,
+                        help="Initial map east edge (default: whole world)",
                         metavar="FLOAT")
 
     args = parser.parse_args()
