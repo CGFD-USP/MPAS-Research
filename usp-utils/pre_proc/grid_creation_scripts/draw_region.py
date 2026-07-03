@@ -1,28 +1,43 @@
 #!/usr/bin/env python
-#
-#  Interactive tool to draw a regional-mesh boundary on a map.
-#
-#  Click to place polygon vertices on a cartopy map; the tool writes a
-#  "lat, lon" points file that create_regional_grid.py --shape polygon reads:
-#
-#      python create_regional_grid.py -r 30 -l 200 \
-#             --shape polygon --polygon-file <output> -o my_region
-#
-#  Controls
-#  --------
-#      left click    add a vertex
-#      right click   undo the last vertex
-#      'c'           clear all vertices
-#      enter         save and quit
-#      escape        quit without saving
-#
-#  Needs an INTERACTIVE matplotlib backend (a display). On a headless server,
-#  run it on your local machine or over SSH X forwarding (ssh -X).
-#
+"""
+Interactive tool to draw a regional-mesh boundary on a map.
+
+Click to place polygon vertices on a cartopy map; the tool writes a
+"lat, lon" points file that create_regional_grid.py --shape polygon reads:
+
+    python create_regional_grid.py -r 30 -l 200 \\
+           --shape polygon --polygon-file <output> -o my_region
+
+Controls
+--------
+    left click    add a vertex
+    right click   undo the last vertex
+    'c'           clear all vertices
+    enter         save and quit
+    escape        quit without saving
+
+Needs an INTERACTIVE matplotlib backend (a display). On a headless server,
+run it on your local machine or over SSH X forwarding (ssh -X).
+"""
 
 import argparse
 import os
 import sys
+
+# This tool needs a GUI backend for the mouse clicks. Some conda setups default
+# matplotlib to the non-interactive 'Agg' backend even when a display exists, so
+# select an interactive one explicitly (Tk first: usually the most reliable over
+# ssh -X, then Qt). A --backend option can override this.
+import matplotlib
+
+_GUI_BACKEND = None
+for _cand in ("TkAgg", "QtAgg"):
+    try:
+        matplotlib.use(_cand, force=True)
+        _GUI_BACKEND = _cand
+        break
+    except Exception:
+        continue
 
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
@@ -124,7 +139,30 @@ class RegionDrawer:
 
 
 def main(args):
-    fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={'projection': PLATE})
+    if args.backend:
+        try:
+            matplotlib.use(args.backend, force=True)
+        except Exception as exc:
+            print("Could not select backend %r: %s" % (args.backend, exc))
+
+    backend = matplotlib.get_backend()
+    print("matplotlib backend:", backend)
+    if backend.lower() == "agg":
+        print("ERROR: matplotlib is using the non-interactive 'Agg' backend, so "
+              "no\nwindow can open. Make sure you have a display (ssh -X) and a "
+              "GUI\ntoolkit (PySide6 or tkinter). You can force one with, e.g., "
+              "--backend TkAgg.")
+        sys.exit(1)
+
+    try:
+        fig, ax = plt.subplots(figsize=(10, 8),
+                               subplot_kw={'projection': PLATE})
+    except Exception as exc:
+        print("ERROR: could not open a window (%s)." % exc)
+        print("Are you on a display? Over SSH use 'ssh -X'. Try --backend TkAgg "
+              "or --backend QtAgg.")
+        sys.exit(1)
+
     ax.set_extent([args.lon_min, args.lon_max, args.lat_min, args.lat_max],
                   crs=PLATE)
     ax.add_feature(cfeature.LAND, facecolor='#f3efe6')
@@ -137,7 +175,8 @@ def main(args):
     gl.right_labels = False
 
     drawer = RegionDrawer(ax, args.output)
-    print(__doc__)
+    print("Draw the region: left-click add, right-click undo, 'c' clear, "
+          "enter save, esc quit.")
     plt.show()
 
     if not drawer.saved:
@@ -154,6 +193,13 @@ if __name__ == '__main__':
         required=False, default="region.txt", type=str,
         help="Output polygon file (lat, lon per line) (default: region.txt)",
         metavar="PATH")
+
+    parser.add_argument(
+        "--backend", dest="backend",
+        required=False, default=None, type=str,
+        help="Force a matplotlib GUI backend (e.g. TkAgg or QtAgg). By default\n"
+             "the tool tries TkAgg then QtAgg.",
+        metavar="STR")
 
     # Initial map view (pan/zoom with the toolbar afterwards).
     parser.add_argument("--lat-min", dest="lat_min", default=-60.0, type=float,
