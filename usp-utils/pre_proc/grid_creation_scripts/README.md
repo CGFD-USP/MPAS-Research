@@ -156,6 +156,24 @@ pass `-clat -clon`:
 -30, -54
 ```
 
+#### Drawing the polygon interactively — `draw_region.py`
+
+Instead of typing coordinates, you can **click them on a map**. `draw_region.py`
+opens a cartopy map (coastlines, country and state borders); left-click to add
+vertices, and it writes the polygon file for you:
+
+```bash
+python draw_region.py -o my_region.txt
+# optional starting view: --lat-min --lat-max --lon-min --lon-max
+```
+
+Controls: **left click** add vertex · **right click** undo · **c** clear ·
+**enter** save & quit · **esc** quit. The saved file is ready for
+`--shape polygon --polygon-file my_region.txt`.
+
+> Needs an interactive display (a GUI window). On a headless server run it on
+> your local machine or over SSH X forwarding (`ssh -X`).
+
 Run `python create_regional_grid.py -h` for the built-in help.
 
 ### Outputs (under `$MPAS_ROOT/grids/<output>/`)
