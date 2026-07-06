@@ -637,20 +637,34 @@ def load_frame(frame, vname, level=None, sum_vars=None, deaccumulate=False,
 # ---------------------------------------------------------------------------
 # Single-frame rendering (used by still image AND each animation frame)
 # ---------------------------------------------------------------------------
-def compute_auto_extent(ds, da=None, margin_frac=0.05):
+def compute_auto_extent(ds, da=None, gridfile=None, margin_frac=0.05):
     """Map extent ``[lon_min, lon_max, lat_min, lat_max]`` from the mesh footprint.
 
     Restricted to the finite (non-NaN) cells of ``da`` when it is a cell field,
     so a masked field (e.g. ``sst`` over the ocean) frames its valid region;
-    otherwise the whole mesh footprint is used. Returns ``None`` if no usable
-    coordinates are found.
+    otherwise the whole mesh footprint is used. The mesh coordinates are taken
+    from ``ds`` when present, else from the ``gridfile`` (many files such as
+    ``sfc_update``/``diag`` carry the field but not ``latCell``/``lonCell``).
+    Returns ``None`` if no usable coordinates are found.
     """
-    if 'latitude' in ds and 'nCells' in ds['latitude'].dims:
-        lat, lon = ds['latitude'].values, ds['longitude'].values
-    elif 'latitudeVertex' in ds:
-        lat, lon = ds['latitudeVertex'].values, ds['longitudeVertex'].values
-    else:
+    def _coords(d):
+        if 'latitude' in d and 'nCells' in d['latitude'].dims:
+            return d['latitude'].values, d['longitude'].values
+        if 'latitudeVertex' in d:
+            return d['latitudeVertex'].values, d['longitudeVertex'].values
         return None
+
+    got = _coords(ds)
+    if got is None and gridfile is not None:
+        try:
+            g = open_mpas_file(gridfile)
+            got = _coords(g)
+            g.close()
+        except Exception:
+            got = None
+    if got is None:
+        return None
+    lat, lon = got
 
     if da is not None and 'nCells' in da.dims and da.values.shape == lat.shape:
         valid = np.isfinite(da.values)
@@ -684,7 +698,7 @@ def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
             lon_min is not None and lon_max is not None):
         ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
     elif auto_extent:
-        ext = compute_auto_extent(ds, da)
+        ext = compute_auto_extent(ds, da, gridfile=gridfile)
         ax.set_extent(ext if ext else [-180.0, 180, -90.0, 90.0],
                       crs=ccrs.PlateCarree())
     else:
