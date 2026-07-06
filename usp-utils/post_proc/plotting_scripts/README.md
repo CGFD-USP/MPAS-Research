@@ -12,6 +12,10 @@ is. Plots and animations share the same options, so a useful flag works for both
 > shims** that forward to `mpas_viz.py` (old commands and `from mpas_plot import …`
 > keep working). Prefer calling `mpas_viz.py` directly in new work.
 
+For a **side view** (vertical transect showing the model levels, terrain and 3D
+fields in height), see [`mpas_cross_section.py`](#vertical-cross-sections-mpas_cross_sectionpy)
+below. It reuses the same building blocks as `mpas_viz.py`.
+
 ## Environment
 
 ```bash
@@ -235,8 +239,68 @@ clamped, so `--tmax` values equal to the step count still select everything.
 - Surface: `surface_pressure`, `sst`, `rainnc`, `rainc`
 - 3D: `theta`, `pressure`, `qv`, `uReconstructZonal`, `uReconstructMeridional`
 
+---
+
+## Vertical cross-sections (`mpas_cross_section.py`)
+
+A **side view**: sample the model cells nearest to a transect line and draw them
+against the model's native vertical coordinate (`zgrid` interfaces, in metres
+MSL), with the terrain (`ter`) filled underneath. Two uses:
+
+- **`--levels-only`** — show the vertical **level structure** (`zgrid` interfaces)
+  plus terrain along the transect, *without any field* (to "see the levels").
+- **`-v <field>`** — **color a 3D field** (`theta`, `qv`, `rho`, wind, …) along
+  the transect, height on the vertical axis, terrain filled at the bottom.
+
+The vertical grid, terrain and mesh coordinates come from a `*.static.nc` /
+`*.init.nc` / `*.grid.nc` — pass it with **`-gf`** when the plotted file itself
+does not carry `zgrid`/`ter` (e.g. `history` files).
+
+**Defining the transect** (exactly one of):
+
+- `--start "lat,lon" --end "lat,lon"` — two end points
+- `--lat <value>` — constant-latitude line (spans the mesh's longitude range)
+- `--lon <value>` — constant-longitude line (spans the mesh's latitude range)
+
+Cells are picked by nearest-neighbour along `--npoints` samples (default 500);
+consecutive duplicates are collapsed, and columns are placed at their accumulated
+great-circle distance. Sample points that fall **outside** a regional mesh are
+detected (via the mesh resolution) and skipped, so an off-domain transect is not
+silently snapped onto a couple of boundary cells.
+
+```bash
+# List the colorable 3D (nVertLevels) variables
+python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc
+
+# See the vertical levels + terrain along a 2-point transect
+python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc \
+    --levels-only --start "-5,-52" --end "4,-36" -o levels.png
+
+# Color potential temperature along a constant-latitude transect, capped at 15 km
+python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc \
+    -v theta --lat 0 --zmax 15000 -o theta_xsec.png
+
+# Water vapor along a constant-longitude transect, vertical axis as level index
+python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc \
+    -v qv --lon -45 --by-index -o qv_xsec.png
+```
+
+**Options** (color options `--cmap/--vmin/--vmax/-c/--extend` and `-t/--time`
+behave as in `mpas_viz.py`):
+
+- `--start` / `--end` / `--lat` / `--lon`: transect definition (pick one mode)
+- `--npoints`: samples along the line (default 500; raise for fine meshes)
+- `--levels-only`: draw `zgrid` interfaces + terrain, no field
+- `--by-index`: vertical axis as level index instead of height (m)
+- `--zmax`: cap the vertical axis at this height (m); the color scale then uses
+  only the visible part so upper-level values don't wash out the plot
+
+> When `--zmax` caps the view, prefer it over `-c/--clip` for fields that grow
+> strongly with height (e.g. `theta`): the scale is taken from what's shown.
+
 ## Authors
 
 Originally adapted by Danilo Couto de Souza (2023), with edits by P. Peixoto,
 F.A.V.B. Alves and G. Torres Mendonça. Unified `plot`+`animate` framework
-(`mpas_viz.py`): Danilo Couto de Souza (2026).
+(`mpas_viz.py`) and the vertical cross-section tool (`mpas_cross_section.py`):
+Danilo Couto de Souza (2026).
