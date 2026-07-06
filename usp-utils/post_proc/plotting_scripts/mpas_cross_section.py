@@ -48,20 +48,34 @@ Usage examples
       --lat -1 -u uReconstructZonal -v_wind uReconstructMeridional -w w \
       --zmax 12000 -o theta_wind.png
 
+  # Animate the transect across many output files (several steps -> .mp4/.gif)
+  python mpas_cross_section.py -f "history.*.nc" -gf meqbr_05km.init.nc \
+      -v theta --lat -1 --zmax 15000 --fps 8 -o theta_xsec.mp4
+
+Time model
+----------
+Input files are expanded into one ordered timeline (as in ``mpas_viz.py``). Use
+``--list-times`` to inspect it and ``--tstart/--tend`` (inclusive) to sub-select:
+one selected step gives a still image, more than one gives an animation. The
+transect geometry is fixed in time, so only the field/wind are re-read per frame.
+
 Reuses the shared building blocks from ``mpas_viz.py`` (file opening, derived
-mesh coordinates, color-scale helpers, colorbar, grid-file resolution and the
-argparse conventions) so behaviour stays consistent across the toolset.
+mesh coordinates, color-scale helpers, colorbar, grid-file resolution, the
+timeline/animation machinery and the argparse conventions) so behaviour stays
+consistent across the toolset.
 
 Author: Danilo Couto de Souza (2026).
 """
 
 import os
 import sys
+import glob
 import argparse
 
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 # Reuse the shared plotting/mesh helpers from the sibling mpas_viz module.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -70,8 +84,10 @@ from mpas_viz import (  # noqa: E402
     open_mpas_file,
     set_plot_kwargs,
     add_colorbar,
+    build_timeline,
+    format_timeline_table,
+    _stitch_pngs,
     _render_table,
-    _decode_xtime,
     _yn,
 )
 
@@ -300,17 +316,6 @@ def _interface_corners(z_iface):
     return np.concatenate([left, mid, right], axis=1)
 
 
-def get_time_label(ds, tindex):
-    """xtime string for the selected time index (or a fallback)."""
-    if 'xtime' in ds.variables:
-        try:
-            xt = ds['xtime'].values
-            return _decode_xtime(xt[tindex] if xt.ndim else xt)
-        except Exception:
-            pass
-    return f"t={tindex}"
-
-
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
@@ -488,41 +493,27 @@ def add_transect_wind(ax, dist_km, z_center, cells, ds, tindex,
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator
+# Geometry + per-frame rendering (shared by still image and animation frames)
 # ---------------------------------------------------------------------------
-def run(infile, vname=None, gridfile=None, outfile=None,
-        start=None, end=None, lat=None, lon=None, npoints=500,
-        levels_only=False, by_index=False, tindex=0, zmax=None,
-        cmap='Spectral_r', vmin=None, vmax=None, clip=False, extend='both',
-        u_var=None, v_var=None, w_var=None, wind_stride=None,
-        wind_lstride=3, w_exag=100.0,
-        dpi=150):
-    """Build and draw a native-grid vertical cross-section."""
-    ds = open_mpas_file(infile)
+def build_geometry(grid_file, gridfile, start, end, lat, lon, npoints):
+    """Resolve the fixed transect geometry (independent of time).
 
-    # List colorable variables when nothing to plot was requested.
-    if vname is None and not levels_only:
-        print("File:", infile)
-        print(format_3d_variables_table(ds))
-        ds.close()
-        return
-
-    # Resolve vertical grid + terrain + mesh coords (from infile or -gf).
-    ds_grid = resolve_vertical_grid(ds, gridfile)
+    Returns a dict with the selected cells, along-track distance, the vertical
+    interfaces and terrain for those cells, and the mesh coordinates/endpoints.
+    """
+    ds_src = open_mpas_file(grid_file)
+    ds_grid = resolve_vertical_grid(ds_src, gridfile)
 
     lat_cell = ds_grid['latitude'].values
     lon_cell = ds_grid['longitude'].values
     zgrid = ds_grid['zgrid'].values          # (nCells, nVertLevelsP1)
     ter = ds_grid['ter'].values              # (nCells,)
+    max_snap_km = (3.0 * float(np.median(ds_grid['resolution'].values))
+                   if 'resolution' in ds_grid else None)
+    if ds_grid is not ds_src:
+        ds_grid.close()
+    ds_src.close()
 
-    # Out-of-domain guard scaled to the mesh resolution (km per cell). Points
-    # whose nearest cell is farther than a few cell widths are off the mesh.
-    if 'resolution' in ds_grid:
-        max_snap_km = 3.0 * float(np.median(ds_grid['resolution'].values))
-    else:
-        max_snap_km = None  # no areaCell to size the mesh -> skip the guard
-
-    # Geometry + nearest-cell sampling.
     lat0, lon0, lat1, lon1 = resolve_endpoints(start, end, lat, lon,
                                                lat_cell, lon_cell)
     cells, dist_km, n_outside = sample_transect(
@@ -538,83 +529,266 @@ def run(infile, vname=None, gridfile=None, outfile=None,
         print(f"  Note: {n_outside}/{npoints} sample points were outside the "
               "mesh domain and were skipped.")
 
-    z_iface = zgrid[cells, :].T              # (nVertLevelsP1, ncols)
-    ter_cols = ter[cells]
+    return {
+        'cells': cells, 'dist_km': dist_km,
+        'z_iface': zgrid[cells, :].T, 'ter_cols': ter[cells],
+        'lat_cell': lat_cell, 'lon_cell': lon_cell,
+        'endpoints': (lat0, lon0, lat1, lon1),
+    }
 
-    fig, ax = plt.subplots(figsize=(11, 6))
 
-    if levels_only:
-        plot_levels_only(ax, dist_km, z_iface, ter_cols, by_index)
-        title = f"Vertical levels ({z_iface.shape[0]} interfaces)"
-    else:
-        if vname not in ds:
-            raise SystemExit(f"\nERROR: variable '{vname}' not found in {infile}.")
-        da = ds[vname]
-        if 'nVertLevels' not in da.dims:
-            hint = ""
-            if vname == 'ter' or ('nCells' in da.dims and da.ndim <= 2):
-                hint = ("\n       To see the terrain along the transect (it is "
-                        "drawn as the filled bottom), use --levels-only.")
-            raise SystemExit(
-                f"\nERROR: '{vname}' has dims {da.dims}; a colored cross-section "
-                "needs a 3D field on (nCells, nVertLevels). Run without -v to "
-                f"list the colorable variables.{hint}")
-        if 'Time' in da.dims:
-            da = da.isel(Time=tindex)
+def _field_at_cells(ds, vname, tindex, cells):
+    """Extract a (nVertLevels, ncols) field slice along the transect."""
+    da = ds[vname]
+    if 'Time' in da.dims:
+        da = da.isel(Time=tindex)
+    return da.values[cells, :].T, da
 
-        field = da.values                    # (nCells, nVertLevels)
-        field2d = field[cells, :].T          # (nVertLevels, ncols)
 
-        # Derive the color scale from the VISIBLE part only: when the vertical
-        # axis is capped with --zmax, values above it (e.g. huge stratospheric
-        # theta) must not wash out the tropospheric gradient.
-        scale2d = field2d
-        if zmax is not None and not by_index:
-            z_center = 0.5 * (z_iface[:-1, :] + z_iface[1:, :])
-            visible = z_center <= zmax
-            if visible.any():
-                scale2d = field2d[visible]
-        plot_kwargs = set_plot_kwargs(da=xr.DataArray(scale2d), clip=clip,
-                                      cmap=cmap, vmin=vmin, vmax=vmax)
-        units = da.attrs.get('units', '')
-        cbar_label = f"{vname} ({units})" if units else vname
-        plot_field(ax, fig, dist_km, z_iface, field2d, ter_cols, by_index,
-                   plot_kwargs, cbar_label, extend)
-        title = f"{vname}"
-        if 'Time' in ds[vname].dims:
-            title += f"\n{get_time_label(ds, tindex)}"
+def _z_center_plot(z_iface, ncols, by_index):
+    """Layer-center vertical coordinate used to place wind symbols/arrows."""
+    if by_index:
+        n_lev = z_iface.shape[0] - 1
+        return np.repeat((np.arange(n_lev) + 0.5)[:, None], ncols, axis=1)
+    return 0.5 * (z_iface[:-1, :] + z_iface[1:, :])
 
-    # Optional wind overlay, decomposed relative to the transect orientation.
+
+def _finalize_axes(ax, geom, title, zmax, by_index):
+    """Apply the shared labels, limits and title to a cross-section axis."""
+    lat0, lon0, lat1, lon1 = geom['endpoints']
+    if zmax is not None and not by_index:
+        ax.set_ylim(ax.get_ylim()[0], zmax)
+    ax.set_xlabel('Distance along transect (km)')
+    ax.set_xlim(geom['dist_km'][0], geom['dist_km'][-1])
+    ax.set_title(f"{title}\n({lat0:.2f}, {lon0:.2f}) → ({lat1:.2f}, {lon1:.2f})",
+                 fontsize=11)
+    ax.grid(True, alpha=0.2, linewidth=0.4)
+
+
+def auto_extent(lon, lat, values=None, margin_frac=0.05, clamp=True):
+    """Bounding box ``[lon_min, lon_max, lat_min, lat_max]`` of the valid cells.
+
+    When ``values`` is given, only cells with finite (non-NaN) data are used, so
+    the box tightens to where the field actually exists; otherwise the full mesh
+    footprint is used. A small relative margin is added and, with ``clamp``, the
+    box is kept within the global lon/lat range.
+    """
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    if values is not None:
+        valid = np.isfinite(np.asarray(values))
+        if valid.ndim > 1:                       # (nCells, nLev, …) -> per cell
+            valid = valid.any(axis=tuple(range(1, valid.ndim)))
+        if valid.any():
+            lon, lat = lon[valid], lat[valid]
+
+    lon_min, lon_max = float(np.min(lon)), float(np.max(lon))
+    lat_min, lat_max = float(np.min(lat)), float(np.max(lat))
+    m_lon = margin_frac * ((lon_max - lon_min) or 1.0)
+    m_lat = margin_frac * ((lat_max - lat_min) or 1.0)
+    ext = [lon_min - m_lon, lon_max + m_lon, lat_min - m_lat, lat_max + m_lat]
+    if clamp:
+        ext[0], ext[1] = max(ext[0], -180.0), min(ext[1], 180.0)
+        ext[2], ext[3] = max(ext[2], -90.0), min(ext[3], 90.0)
+    return ext
+
+
+def add_location_inset(fig, geom, rect=(0.135, 0.55, 0.24, 0.28)):
+    """Draw a small cartopy locator map showing the transect as a red line.
+
+    The inset extent is set automatically from the mesh footprint
+    (``auto_extent``), so a regional mesh is framed nicely without manual bounds.
+    """
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
+    cells = geom['cells']
+    tlon = geom['lon_cell'][cells]
+    tlat = geom['lat_cell'][cells]
+    ext = auto_extent(geom['lon_cell'], geom['lat_cell'])
+
+    inax = fig.add_axes(rect, projection=ccrs.PlateCarree())
+    inax.set_extent(ext, crs=ccrs.PlateCarree())
+    try:
+        inax.add_feature(cfeature.LAND, facecolor='0.85', zorder=0)
+        inax.add_feature(cfeature.OCEAN, facecolor='white', zorder=0)
+        inax.coastlines('50m', linewidth=0.4, zorder=1)
+    except Exception:
+        pass  # Natural Earth data unavailable offline -> still show the transect
+    inax.gridlines(draw_labels=False, linewidth=0.3, alpha=0.4)
+
+    inax.plot(tlon, tlat, color='red', linewidth=1.6,
+              transform=ccrs.PlateCarree(), zorder=3)
+    inax.plot(tlon[0], tlat[0], marker='o', color='red', markersize=3,
+              transform=ccrs.PlateCarree(), zorder=4)
+    inax.plot(tlon[-1], tlat[-1], marker='s', color='red', markersize=3,
+              transform=ccrs.PlateCarree(), zorder=4)
+    inax.set_title('transect', fontsize=7)
+    return inax
+
+
+def render_field_frame(ax, fig, frame, geom, vname, plot_kwargs, *,
+                       by_index, zmax, extend, cbar_label,
+                       u_var, v_var, w_var, wind_stride, wind_lstride, w_exag,
+                       show_inset=True):
+    """Draw one timeline frame (field + optional wind) onto ``ax``."""
+    ds = open_mpas_file(frame['file'])
+    has_time = 'Time' in ds[vname].dims
+    field2d, _ = _field_at_cells(ds, vname, frame['tindex'], geom['cells'])
+    plot_field(ax, fig, geom['dist_km'], geom['z_iface'], field2d,
+               geom['ter_cols'], by_index, plot_kwargs, cbar_label, extend)
+
     if u_var is not None and v_var is not None:
-        if by_index:
-            n_lev = z_iface.shape[0] - 1
-            z_center_plot = np.repeat(
-                (np.arange(n_lev) + 0.5)[:, None], len(cells), axis=1)
-        else:
-            z_center_plot = 0.5 * (z_iface[:-1, :] + z_iface[1:, :])
-        te, tn = transect_tangent(lat_cell[cells], lon_cell[cells])
-        add_transect_wind(ax, dist_km, z_center_plot, cells, ds, tindex,
-                          u_var, v_var, w_var, te, tn,
+        z_center = _z_center_plot(geom['z_iface'], len(geom['cells']), by_index)
+        te, tn = transect_tangent(geom['lat_cell'][geom['cells']],
+                                  geom['lon_cell'][geom['cells']])
+        add_transect_wind(ax, geom['dist_km'], z_center, geom['cells'], ds,
+                          frame['tindex'], u_var, v_var, w_var, te, tn,
                           wind_stride=wind_stride, wind_lstride=wind_lstride,
                           w_exag=w_exag)
 
-    if zmax is not None and not by_index:
-        ax.set_ylim(ax.get_ylim()[0], zmax)
-
-    ax.set_xlabel('Distance along transect (km)')
-    ax.set_xlim(dist_km[0], dist_km[-1])
-    subtitle = (f"({lat0:.2f}, {lon0:.2f}) → ({lat1:.2f}, {lon1:.2f})")
-    ax.set_title(f"{title}\n{subtitle}", fontsize=11)
-    ax.grid(True, alpha=0.2, linewidth=0.4)
-
+    title = f"{vname}\n{frame['xtime']}" if has_time else vname
+    _finalize_axes(ax, geom, title, zmax, by_index)
+    if show_inset:
+        add_location_inset(fig, geom)
     ds.close()
 
+
+def _save_or_show(fig, outfile, dpi):
     if outfile is not None:
         fig.savefig(outfile, dpi=dpi, bbox_inches='tight')
         print(f"Saved: {os.path.abspath(outfile)}")
     else:
         plt.show()
     plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+def run(infile, vname=None, gridfile=None, outfile=None,
+        start=None, end=None, lat=None, lon=None, npoints=500,
+        levels_only=False, by_index=False, tstart=None, tend=None,
+        list_times=False, zmax=None,
+        cmap='Spectral_r', vmin=None, vmax=None, clip=False, extend='both',
+        u_var=None, v_var=None, w_var=None, wind_stride=None,
+        wind_lstride=3, w_exag=100.0, inset=True, fps=5, dpi=150):
+    """Draw a still cross-section, or animate when several time steps are picked.
+
+    Files are expanded into one ordered timeline (as in ``mpas_viz.py``); a
+    single selected step gives a still image, more than one gives an animation.
+    The transect geometry is fixed in time, so it is resolved once and only the
+    field/wind are re-read per frame.
+    """
+    # 1. Build the timeline; optionally just list it.
+    timeline = build_timeline(infile)
+    if list_times:
+        print("Files:", infile)
+        print(format_timeline_table(timeline))
+        return
+
+    # 2. No variable (and not levels-only): list colorable 3D variables and exit.
+    if vname is None and not levels_only:
+        ds0 = open_mpas_file(timeline[0]['file'])
+        print("File:", timeline[0]['file'])
+        print(format_3d_variables_table(ds0))
+        ds0.close()
+        return
+
+    # 3. Fixed transect geometry (grid comes from -gf or the first file).
+    geom = build_geometry(timeline[0]['file'], gridfile,
+                          start, end, lat, lon, npoints)
+
+    # 4. Levels-only is time-independent -> a single static image.
+    if levels_only:
+        fig, ax = plt.subplots(figsize=(11, 6))
+        plot_levels_only(ax, geom['dist_km'], geom['z_iface'], geom['ter_cols'],
+                         by_index)
+        _finalize_axes(ax, geom,
+                       f"Vertical levels ({geom['z_iface'].shape[0]} interfaces)",
+                       zmax, by_index)
+        if inset:
+            add_location_inset(fig, geom)
+        _save_or_show(fig, outfile, dpi)
+        return
+
+    # 5. Validate the field on the first file.
+    ds0 = open_mpas_file(timeline[0]['file'])
+    if vname not in ds0:
+        raise SystemExit(f"\nERROR: variable '{vname}' not found in the file(s).")
+    da0 = ds0[vname]
+    if 'nVertLevels' not in da0.dims:
+        hint = ""
+        if vname == 'ter' or ('nCells' in da0.dims and da0.ndim <= 2):
+            hint = ("\n       To see the terrain along the transect (it is "
+                    "drawn as the filled bottom), use --levels-only.")
+        raise SystemExit(
+            f"\nERROR: '{vname}' has dims {da0.dims}; a colored cross-section "
+            "needs a 3D field on (nCells, nVertLevels). Run without -v to list "
+            f"the colorable variables.{hint}")
+    has_time = 'Time' in da0.dims
+    units = da0.attrs.get('units', '')
+    cbar_label = f"{vname} ({units})" if units else vname
+    ds0.close()
+
+    # 6. Select the timeline sub-range (inclusive). A field without a Time
+    #    dimension is inherently a single frame.
+    last = len(timeline) - 1
+    lo = 0 if tstart is None else max(0, tstart)
+    hi = last if tend is None else min(last, tend)
+    if lo > hi:
+        raise SystemExit(
+            f"\nERROR: time range --tstart {tstart} --tend {tend} is invalid "
+            f"for a timeline of {len(timeline)} step(s).")
+    selected = timeline[lo:hi + 1]
+    if not has_time:
+        selected = selected[:1]
+
+    # 7. One consistent color scale across the selected frames (visible part
+    #    only when --zmax caps the view).
+    visible = None
+    if zmax is not None and not by_index:
+        z_center = 0.5 * (geom['z_iface'][:-1, :] + geom['z_iface'][1:, :])
+        visible = z_center <= zmax
+    darrays = []
+    for frame in selected:
+        ds = open_mpas_file(frame['file'])
+        f2d, _ = _field_at_cells(ds, vname, frame['tindex'], geom['cells'])
+        darrays.append(f2d[visible] if (visible is not None and visible.any())
+                       else f2d)
+        ds.close()
+    plot_kwargs = set_plot_kwargs(list_darrays=darrays, clip=clip,
+                                  cmap=cmap, vmin=vmin, vmax=vmax)
+
+    frame_kw = dict(by_index=by_index, zmax=zmax, extend=extend,
+                    cbar_label=cbar_label, u_var=u_var, v_var=v_var,
+                    w_var=w_var, wind_stride=wind_stride,
+                    wind_lstride=wind_lstride, w_exag=w_exag, show_inset=inset)
+
+    # 8. Single frame -> still image.
+    if len(selected) == 1:
+        fig, ax = plt.subplots(figsize=(11, 6))
+        render_field_frame(ax, fig, selected[0], geom, vname, plot_kwargs,
+                           **frame_kw)
+        _save_or_show(fig, outfile, dpi)
+        return
+
+    # 9. Multiple frames -> animation.
+    if outfile is None:
+        outfile = 'mpas_xsec_animation.mp4'
+    print(f"{len(selected)} time steps selected -> animation: {outfile}  "
+          f"(fps={fps}, dpi={dpi})")
+    temp_files = []
+    for i, frame in enumerate(tqdm(selected, desc="  Frames")):
+        fig, ax = plt.subplots(figsize=(11, 6))
+        render_field_frame(ax, fig, frame, geom, vname, plot_kwargs, **frame_kw)
+        tmp = f'_mpas_xsec_frame_{i:05d}.png'
+        fig.savefig(tmp, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        temp_files.append(tmp)
+    print("  Combining frames...")
+    _stitch_pngs(temp_files, outfile, fps)
+    print(f"Saved: {os.path.abspath(outfile)}")
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +801,8 @@ def build_parser():
 
     parser.add_argument("-f", "--infile", "--files", dest="infile", type=str,
                         required=True,
-                        help="MPAS file with the field / vertical grid")
+                        help="MPAS file or glob pattern (e.g. 'history.*.nc'). "
+                             "Several time steps -> animation.")
     parser.add_argument("-gf", "--gridfile", type=str, default=None,
                         help="File providing zgrid/ter/mesh coords if infile "
                              "lacks them (static/init/grid .nc)")
@@ -658,8 +833,16 @@ def build_parser():
                         help="Vertical axis as level index instead of height (m)")
     parser.add_argument("--zmax", type=float, default=None,
                         help="Cap the vertical axis at this height (m)")
-    parser.add_argument("-t", "--time", dest="time", type=int, default=0,
-                        help="Time index for the field (default: 0)")
+
+    # Time selection (one step -> still image; several -> animation)
+    parser.add_argument("--tstart", "--tmin", dest="tstart", type=int,
+                        default=None, help="First timeline index (inclusive)")
+    parser.add_argument("--tend", "--tmax", dest="tend", type=int, default=None,
+                        help="Last timeline index (inclusive)")
+    parser.add_argument("-t", "--time", dest="time", type=int, default=None,
+                        help="Single timeline index (shortcut for one still)")
+    parser.add_argument("--list-times", action='store_true',
+                        help="Print the available time steps and exit")
 
     # Color
     parser.add_argument("--cmap", type=str, default='Spectral_r',
@@ -692,6 +875,12 @@ def build_parser():
     parser.add_argument("--wind-lstride", type=int, default=3,
                         help="Plot a wind symbol every Nth level (default: 3)")
 
+    parser.add_argument("--no-inset", action='store_true',
+                        help="Do not draw the location mini-map inset")
+
+    # Animation / output
+    parser.add_argument("--fps", type=int, default=5,
+                        help="Animation frames per second (default: 5)")
     parser.add_argument("--dpi", type=int, default=150,
                         help="Output resolution (default: 150)")
 
@@ -702,8 +891,13 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if not os.path.exists(args.infile):
-        raise SystemExit(f"\nERROR: file does not exist: {args.infile}")
+    if not glob.glob(args.infile) and not os.path.exists(args.infile):
+        raise SystemExit(f"\nERROR: no file matches: {args.infile}")
+
+    # -t is a shortcut for a single still image.
+    tstart, tend = args.tstart, args.tend
+    if args.time is not None:
+        tstart = tend = args.time
 
     run(infile=args.infile,
         vname=args.var,
@@ -713,13 +907,13 @@ def main(argv=None):
         npoints=args.npoints,
         levels_only=args.levels_only,
         by_index=args.by_index,
-        tindex=args.time,
+        tstart=tstart, tend=tend, list_times=args.list_times,
         zmax=args.zmax,
         cmap=args.cmap, vmin=args.vmin, vmax=args.vmax,
         clip=_yn(args.clip), extend=args.extend,
         u_var=args.u_wind, v_var=args.v_wind, w_var=args.w_wind,
         wind_stride=args.wind_stride, wind_lstride=args.wind_lstride,
-        w_exag=args.w_exag,
+        w_exag=args.w_exag, inset=not args.no_inset, fps=args.fps,
         dpi=args.dpi)
 
 

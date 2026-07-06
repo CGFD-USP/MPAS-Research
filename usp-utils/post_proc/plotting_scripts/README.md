@@ -36,21 +36,27 @@ you are checking and *what a healthy result looks like*.
 
 ```bash
 # --- edit these ---
-export RUN=/p1-swell/danilocs/MPAS-Research/runs/meqbr_05km   # your run directory
-export MESH=meqbr_05km                                        # mesh basename
+export RUN=/path/to/your/run       # directory holding the run's .nc files
+export MESH=your_mesh_name         # mesh basename (the <MESH> in <MESH>.grid.nc)
 
-# Limited-area run? set the domain box. For a GLOBAL mesh, use: export BOUNDS=""
+# Zoom box (-lat/-lon). Use it for a limited-area run, OR to focus on a region of
+# a global / variable-resolution mesh. For a full global view, set BOUNDS="".
 export LATMIN=-8;  export LATMAX=7
 export LONMIN=-55; export LONMAX=-32
 export BOUNDS="-lat_min $LATMIN -lat_max $LATMAX -lon_min $LONMIN -lon_max $LONMAX"
 
-# Where to slice vertical cross-sections (a latitude and a longitude inside the domain)
+# Where to slice vertical cross-sections (a latitude and a longitude in-domain)
 export TLAT=-1
 export TLON=-45
 ```
 
 > On fine meshes each map is one fill per cell and can take a while. Keep
 > `-g no` (no cell edges), use the `$BOUNDS` zoom, and lower `--dpi` for previews.
+
+> Instead of `$BOUNDS`, `mpas_viz.py` also accepts **`--auto-extent`**, which
+> frames the map to the mesh footprint (or a masked field's valid region)
+> automatically — handy for regional meshes. `mpas_cross_section.py` always
+> auto-frames its locator inset.
 
 ## 1. Horizontal grid — location, shape, resolution
 
@@ -139,10 +145,15 @@ python mpas_viz.py -f "$RUN/diag.*.nc" -v mslp -gf $RUN/$MESH.static.nc \
 python mpas_cross_section.py -f $RUN/history.<TIMESTAMP>.nc -gf $RUN/$MESH.init.nc \
     -v theta --lat $TLAT -u uReconstructZonal -v_wind uReconstructMeridional -w w \
     --zmax 12000 -o $RUN/xsec_theta_wind.png
+
+# 5e. Animate a cross-section across the run (several steps -> .mp4/.gif)
+python mpas_cross_section.py -f "$RUN/history.*.nc" -gf $RUN/$MESH.init.nc \
+    -v theta --lat $TLAT --zmax 15000 --fps 8 -o $RUN/xsec_theta.mp4
 ```
 
 **Look for:** systems tracking and evolving as expected; winds and vertical motion
-consistent with the temperature/pressure structure. Test an animation on a short
+consistent with the temperature/pressure structure. Both `mpas_viz.py` and
+`mpas_cross_section.py` animate when several time steps are selected — test a short
 range first (`--tstart 0 --tend 4`) before rendering the whole run.
 
 > **Always quote glob patterns** (`"$RUN/diag.*.nc"`) so the *script* expands
@@ -261,6 +272,9 @@ python mpas_viz.py -f "history.*.nc" --sum-vars "rainc+rainnc" --deaccumulate -o
 
 **Map**
 - `-lat_min, -lat_max, -lon_min, -lon_max`: geographic zoom box
+- `--auto-extent`: auto-frame the map to the mesh footprint (or the non-NaN
+  region of the field) instead of global — a hands-off `$BOUNDS` for regional
+  meshes and masked fields (`sst`); explicit `-lat_min/...` still take priority
 - `--no-coastlines`: hide coastlines
 
 **Wind vectors**
@@ -303,7 +317,8 @@ Typical variables — surface: `surface_pressure`, `sst`, `mslp`, `rainnc`, `rai
 
 A **side view**: sample the model cells nearest to a transect line and draw them
 against the native vertical coordinate (`zgrid` interfaces, metres MSL), with the
-terrain (`ter`) filled underneath. Two modes:
+terrain (`ter`) filled underneath. Like `mpas_viz.py`, it draws a **still image**
+for one time step and an **animation** when several are selected. Two modes:
 
 - **`--levels-only`** — show the vertical **level structure** (`zgrid` interfaces)
   plus terrain along the transect, *without any field* (to "see the levels").
@@ -313,6 +328,11 @@ terrain (`ter`) filled underneath. Two modes:
 The vertical grid `zgrid` is produced by `init_atmosphere` and lives **only in
 `*.init.nc`** (a `*.static.nc` has `ter` but not `zgrid`). Pass the init file with
 **`-gf`** when the plotted file itself lacks `zgrid`/`ter` (e.g. `history` files).
+
+A small **cartopy locator inset** (top-left) shows where the transect sits, as a
+red line on a coastline map. Its extent is set automatically from the mesh
+footprint, so a regional mesh is framed without any manual bounds; disable it
+with `--no-inset`.
 
 ## Defining the transect (pick exactly one)
 
@@ -326,29 +346,39 @@ great-circle distance. Sample points **outside** a regional mesh are detected (v
 the mesh resolution) and skipped, so an off-domain transect is not silently
 snapped onto boundary cells.
 
+The transect geometry is fixed in time, so it is resolved once and only the
+field/wind are re-read per frame — inspect the timeline with `--list-times` and
+sub-select with `--tstart/--tend` (inclusive), exactly as in `mpas_viz.py`.
+
 ## Examples
+
+Replace `<MESH>` with your mesh basename; quote glob patterns.
 
 ```bash
 # List the colorable 3D (nVertLevels) variables
-python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc
+python mpas_cross_section.py -f <MESH>.init.nc -gf <MESH>.init.nc
 
 # See the vertical levels + terrain along a 2-point transect
-python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc \
+python mpas_cross_section.py -f <MESH>.init.nc -gf <MESH>.init.nc \
     --levels-only --start "-5,-52" --end "4,-36" -o levels.png
 
 # Color potential temperature along a constant-latitude transect, capped at 15 km
-python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc \
+python mpas_cross_section.py -f <MESH>.init.nc -gf <MESH>.init.nc \
     -v theta --lat 0 --zmax 15000 -o theta_xsec.png
 
 # Water vapor along a constant-longitude transect, vertical axis as level index
-python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc \
+python mpas_cross_section.py -f <MESH>.init.nc -gf <MESH>.init.nc \
     -v qv --lon -45 --by-index -o qv_xsec.png
 
 # Wind decomposed relative to the transect (needs cell-centered reconstructed
 # winds — from diag/history — and optionally w)
-python mpas_cross_section.py -f history.nc -gf meqbr_05km.init.nc -v theta \
+python mpas_cross_section.py -f history.nc -gf <MESH>.init.nc -v theta \
     --lat -1 -u uReconstructZonal -v_wind uReconstructMeridional -w w \
     --zmax 12000 -o theta_wind.png
+
+# Animate the transect across many output files (several steps -> .mp4/.gif)
+python mpas_cross_section.py -f "history.*.nc" -gf <MESH>.init.nc \
+    -v theta --lat -1 --zmax 15000 --fps 8 -o theta_xsec.mp4
 ```
 
 ## Wind decomposed relative to the transect
@@ -381,10 +411,18 @@ Color options (`--cmap` default `Spectral_r`, `--vmin/--vmax/-c/--extend`) and
 **Transect / vertical axis**
 - `--start` / `--end` / `--lat` / `--lon`: transect definition (pick one mode)
 - `--npoints`: samples along the line (default 500; raise for fine meshes)
-- `--levels-only`: draw `zgrid` interfaces + terrain, no field
+- `--levels-only`: draw `zgrid` interfaces + terrain, no field (time-independent)
 - `--by-index`: vertical axis as level index instead of height (m)
 - `--zmax`: cap the vertical axis at this height (m); the color scale then uses
   only the visible part so upper-level values don't wash out the plot
+- `--no-inset`: do not draw the cartopy location mini-map (auto-framed to the mesh)
+
+**Time / animation**
+- `--list-times`: print the timeline and exit
+- `--tstart, --tend`: timeline range, inclusive (aliases: `--tmin`, `--tmax`);
+  one step → still image, several → animation
+- `-t, --time`: single timeline index (shortcut for one still)
+- `--fps`: animation frames per second (default 5)
 
 **Wind overlay** (decomposed relative to the transect)
 - `-u, --u_wind` / `-v_wind, --v_wind`: cell-centered zonal / meridional wind — enables the overlay

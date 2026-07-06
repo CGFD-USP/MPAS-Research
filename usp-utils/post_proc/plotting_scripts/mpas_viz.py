@@ -637,25 +637,58 @@ def load_frame(frame, vname, level=None, sum_vars=None, deaccumulate=False,
 # ---------------------------------------------------------------------------
 # Single-frame rendering (used by still image AND each animation frame)
 # ---------------------------------------------------------------------------
+def compute_auto_extent(ds, da=None, margin_frac=0.05):
+    """Map extent ``[lon_min, lon_max, lat_min, lat_max]`` from the mesh footprint.
+
+    Restricted to the finite (non-NaN) cells of ``da`` when it is a cell field,
+    so a masked field (e.g. ``sst`` over the ocean) frames its valid region;
+    otherwise the whole mesh footprint is used. Returns ``None`` if no usable
+    coordinates are found.
+    """
+    if 'latitude' in ds and 'nCells' in ds['latitude'].dims:
+        lat, lon = ds['latitude'].values, ds['longitude'].values
+    elif 'latitudeVertex' in ds:
+        lat, lon = ds['latitudeVertex'].values, ds['longitudeVertex'].values
+    else:
+        return None
+
+    if da is not None and 'nCells' in da.dims and da.values.shape == lat.shape:
+        valid = np.isfinite(da.values)
+        if valid.any():
+            lat, lon = lat[valid], lon[valid]
+
+    lon_min, lon_max = float(np.min(lon)), float(np.max(lon))
+    lat_min, lat_max = float(np.min(lat)), float(np.max(lat))
+    m_lon = margin_frac * ((lon_max - lon_min) or 1.0)
+    m_lat = margin_frac * ((lat_max - lat_min) or 1.0)
+    return [max(lon_min - m_lon, -180.0), min(lon_max + m_lon, 180.0),
+            max(lat_min - m_lat, -90.0), min(lat_max + m_lat, 90.0)]
+
+
 def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
                      level=None, gridfile=None, mask_land=False,
                      plotEdge=True, show_coastlines=True, show_progress=True,
                      u_var=None, v_var=None, stride=15,
                      sum_vars=None, deaccumulate=False, prev_frame=None,
                      lat_min=None, lat_max=None, lon_min=None, lon_max=None,
-                     extend='both', add_cbar=True):
+                     auto_extent=False, extend='both', add_cbar=True):
     """Draw one timeline frame onto ``ax`` (cells/vertices, wind, title, cbar)."""
     ax.clear()
     add_cartopy_details(ax, zorder=2, show_coastlines=show_coastlines)
 
+    da, ds, vname = load_frame(frame, vname, level=level, sum_vars=sum_vars,
+                               deaccumulate=deaccumulate, prev_frame=prev_frame)
+
+    # Extent: explicit box wins; else auto-frame to the mesh/valid data; else global.
     if (lat_min is not None and lat_max is not None and
             lon_min is not None and lon_max is not None):
         ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+    elif auto_extent:
+        ext = compute_auto_extent(ds, da)
+        ax.set_extent(ext if ext else [-180.0, 180, -90.0, 90.0],
+                      crs=ccrs.PlateCarree())
     else:
         ax.set_extent([-180.0, 180, -90.0, 90.0], crs=ccrs.PlateCarree())
-
-    da, ds, vname = load_frame(frame, vname, level=level, sum_vars=sum_vars,
-                               deaccumulate=deaccumulate, prev_frame=prev_frame)
 
     if 'nCells' in da.dims:
         plot_cells_mpas(da, ds, ax, plotEdge, gridfile=gridfile,
@@ -746,6 +779,7 @@ def run(file_pattern, vname=None, outfile=None,
         gridfile=None, plotEdge=True, mask_land=False, clip=False,
         cmap='Spectral_r', vmin=None, vmax=None, extend='both',
         lat_min=None, lat_max=None, lon_min=None, lon_max=None,
+        auto_extent=False,
         show_coastlines=True, u_var=None, v_var=None, stride=15,
         sum_vars=None, deaccumulate=False,
         fps=5, dpi=150, n_jobs=1):
@@ -800,7 +834,8 @@ def run(file_pattern, vname=None, outfile=None,
                     u_var=u_var, v_var=v_var, stride=stride,
                     sum_vars=sum_vars, deaccumulate=deaccumulate,
                     lat_min=lat_min, lat_max=lat_max,
-                    lon_min=lon_min, lon_max=lon_max, extend=extend)
+                    lon_min=lon_min, lon_max=lon_max,
+                    auto_extent=auto_extent, extend=extend)
 
     # 6. Single frame -> still image.
     if len(selected) == 1:
@@ -919,6 +954,10 @@ def build_parser():
     parser.add_argument("-lat_max", type=float, default=None)
     parser.add_argument("-lon_min", type=float, default=None)
     parser.add_argument("-lon_max", type=float, default=None)
+    parser.add_argument("--auto-extent", action='store_true',
+                        help="Auto-frame the map to the mesh footprint (or the "
+                             "non-NaN region of the field), instead of global. "
+                             "Explicit -lat_min/-lon_min/... still take priority.")
     parser.add_argument("--no-coastlines", action='store_true',
                         help="Hide coastlines")
 
@@ -978,6 +1017,7 @@ def main(argv=None):
         extend=args.extend,
         lat_min=args.lat_min, lat_max=args.lat_max,
         lon_min=args.lon_min, lon_max=args.lon_max,
+        auto_extent=args.auto_extent,
         show_coastlines=not args.no_coastlines,
         u_var=args.u_wind, v_var=args.v_wind, stride=args.stride,
         sum_vars=args.sum_vars, deaccumulate=args.deaccumulate,
