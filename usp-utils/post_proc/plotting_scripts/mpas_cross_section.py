@@ -42,6 +42,12 @@ Usage examples
   python mpas_cross_section.py -f meqbr_05km.init.nc -gf meqbr_05km.init.nc \
       -v qv --lon -45 --by-index -o qv_xsec.png
 
+  # Wind decomposed relative to the transect: in-plane arrows (along-transect +
+  # vertical) and normal-component symbols (dot = towards viewer, cross = away)
+  python mpas_cross_section.py -f history.nc -gf meqbr_05km.init.nc -v theta \
+      --lat -1 -u uReconstructZonal -v_wind uReconstructMeridional -w w \
+      --zmax 12000 -o theta_wind.png
+
 Reuses the shared building blocks from ``mpas_viz.py`` (file opening, derived
 mesh coordinates, color-scale helpers, colorbar, grid-file resolution and the
 argparse conventions) so behaviour stays consistent across the toolset.
@@ -368,12 +374,128 @@ def plot_field(ax, fig, dist_km, z_iface, field2d, ter_cols, by_index,
 
 
 # ---------------------------------------------------------------------------
+# Wind decomposition relative to the transect
+# ---------------------------------------------------------------------------
+def transect_tangent(latc, lonc, smooth=5):
+    """Per-column along-transect unit vector (east, north) from cell centers.
+
+    The nearest-cell path wiggles slightly (it hops between cell centers), which
+    would give a pure zonal/meridional wind a spurious normal component; a short
+    moving average over the direction (``smooth`` columns) damps that.
+
+    Returns ``(te, tn)`` pointing from the transect start towards its end.
+    """
+    latc = np.asarray(latc, dtype=float)
+    lonc = np.asarray(lonc, dtype=float)
+    de = np.cos(np.radians(latc)) * np.gradient(lonc)   # local eastward metric
+    dn = np.gradient(latc)                              # local northward metric
+
+    if smooth > 1 and len(de) > smooth:
+        pad = smooth // 2
+        k = np.ones(smooth) / smooth
+        de = np.convolve(np.pad(de, pad, mode='edge'), k, 'valid')[:len(latc)]
+        dn = np.convolve(np.pad(dn, pad, mode='edge'), k, 'valid')[:len(latc)]
+
+    norm = np.hypot(de, dn)
+    norm[norm == 0] = 1.0
+    return de / norm, dn / norm
+
+
+def _wind_cell_field(ds, name, tindex, nlev, cells):
+    """Extract a (nlev, ncols) wind array at layer centers for ``cells``."""
+    if name not in ds:
+        raise SystemExit(f"\nERROR: wind variable '{name}' not found in the file.")
+    da = ds[name]
+    if 'Time' in da.dims:
+        da = da.isel(Time=tindex)
+    arr = da.values
+    if arr.ndim != 2:
+        raise SystemExit(
+            f"\nERROR: wind variable '{name}' has dims {ds[name].dims}; expected "
+            "a 3D field on (nCells, nVertLevels[/P1]).")
+    # Interface field (nVertLevelsP1, e.g. w) -> average onto layer centers.
+    if arr.shape[1] == nlev + 1:
+        arr = 0.5 * (arr[:, :-1] + arr[:, 1:])
+    return arr[cells, :].T                       # (nlev, ncols)
+
+
+def add_transect_wind(ax, dist_km, z_center, cells, ds, tindex,
+                      u_var, v_var, w_var, te, tn,
+                      wind_stride=None, wind_lstride=3, w_exag=100.0,
+                      ref_speed=None):
+    """Overlay winds decomposed relative to the transect orientation.
+
+    The horizontal wind (u east, v north) is split into:
+      * along-transect ``u_t = u·te + v·tn`` (positive towards the right/end),
+      * transect-normal ``u_n = u·tn - v·te`` (positive = out of the page,
+        towards the viewer).
+
+    In-plane arrows show the (along-transect, vertical) circulation; ``w`` is
+    multiplied by ``w_exag`` so the qualitative tilt is visible (arrow angle is
+    atan2(w·exag, u_t), independent of the km-vs-m axes). The normal component is
+    drawn with the standard meteorological symbols: a filled dot inside a circle
+    for flow towards the viewer (⊙, out of page) and a cross for flow away from
+    the viewer (⊗, into page), sized by magnitude.
+    """
+    nlev, ncols = z_center.shape
+    u = _wind_cell_field(ds, u_var, tindex, nlev, cells)
+    v = _wind_cell_field(ds, v_var, tindex, nlev, cells)
+    w = (_wind_cell_field(ds, w_var, tindex, nlev, cells)
+         if w_var is not None else np.zeros_like(u))
+
+    te2, tn2 = te[None, :], tn[None, :]
+    u_t = u * te2 + v * tn2
+    u_n = u * tn2 - v * te2
+
+    if wind_stride is None:
+        wind_stride = max(1, ncols // 30)        # aim for ~30 arrows across
+    ci = np.arange(0, ncols, wind_stride)
+    li = np.arange(0, nlev, wind_lstride)
+    C, L = np.meshgrid(ci, li)
+
+    X = np.tile(dist_km, (nlev, 1))[L, C]
+    Z = z_center[L, C]
+    Ut, W, Un = u_t[L, C], w[L, C], u_n[L, C]
+
+    # In-plane circulation arrows (along-transect, vertical). angles='uv' keeps
+    # the tilt tied to the components, not to the distorted data axes.
+    q = ax.quiver(X, Z, Ut, W * w_exag, angles='uv', pivot='mid',
+                  scale_units='width', width=0.0022, color='k',
+                  alpha=0.85, zorder=8)
+    if ref_speed is None:
+        ref_speed = max(1.0, round(float(np.nanpercentile(np.abs(Ut), 90))))
+    ax.quiverkey(q, 0.80, 1.035, ref_speed,
+                 f"{ref_speed:g} m/s (along/vert, w×{w_exag:g})",
+                 labelpos='E', coordinates='axes', fontproperties={'size': 8})
+
+    # Normal-component symbols: dot = towards viewer, cross = away. Size ∝ |u_n|.
+    # Skip points with negligible normal flow so pure in-plane regions stay clean.
+    amax = float(np.nanmax(np.abs(Un))) or 1.0
+    sig = np.abs(Un) >= 0.05 * amax
+    size = 15.0 + 120.0 * (np.abs(Un) / amax)
+    toward = sig & (Un > 0)
+    away = sig & (Un <= 0)
+    ax.scatter(X[sig], Z[sig], s=size[sig], facecolors='none', edgecolors='k',
+               linewidths=0.6, zorder=9)
+    ax.scatter(X[toward], Z[toward], s=size[toward] * 0.22, c='k',
+               marker='o', zorder=10)
+    ax.scatter(X[away], Z[away], s=size[away] * 0.5, c='k',
+               marker='x', linewidths=0.8, zorder=10)
+
+    ax.text(0.005, 1.035, "normal:  ⊙ toward viewer   ⊗ away",
+            transform=ax.transAxes, fontsize=8, va='bottom')
+    return
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 def run(infile, vname=None, gridfile=None, outfile=None,
         start=None, end=None, lat=None, lon=None, npoints=500,
         levels_only=False, by_index=False, tindex=0, zmax=None,
-        cmap='Spectral', vmin=None, vmax=None, clip=False, extend='both',
+        cmap='Spectral_r', vmin=None, vmax=None, clip=False, extend='both',
+        u_var=None, v_var=None, w_var=None, wind_stride=None,
+        wind_lstride=3, w_exag=100.0,
         dpi=150):
     """Build and draw a native-grid vertical cross-section."""
     ds = open_mpas_file(infile)
@@ -462,6 +584,20 @@ def run(infile, vname=None, gridfile=None, outfile=None,
         if 'Time' in ds[vname].dims:
             title += f"\n{get_time_label(ds, tindex)}"
 
+    # Optional wind overlay, decomposed relative to the transect orientation.
+    if u_var is not None and v_var is not None:
+        if by_index:
+            n_lev = z_iface.shape[0] - 1
+            z_center_plot = np.repeat(
+                (np.arange(n_lev) + 0.5)[:, None], len(cells), axis=1)
+        else:
+            z_center_plot = 0.5 * (z_iface[:-1, :] + z_iface[1:, :])
+        te, tn = transect_tangent(lat_cell[cells], lon_cell[cells])
+        add_transect_wind(ax, dist_km, z_center_plot, cells, ds, tindex,
+                          u_var, v_var, w_var, te, tn,
+                          wind_stride=wind_stride, wind_lstride=wind_lstride,
+                          w_exag=w_exag)
+
     if zmax is not None and not by_index:
         ax.set_ylim(ax.get_ylim()[0], zmax)
 
@@ -526,8 +662,8 @@ def build_parser():
                         help="Time index for the field (default: 0)")
 
     # Color
-    parser.add_argument("--cmap", type=str, default='Spectral',
-                        help="Colormap (default: Spectral)")
+    parser.add_argument("--cmap", type=str, default='Spectral_r',
+                        help="Colormap (default: Spectral_r — red = higher)")
     parser.add_argument("--vmin", type=float, default=None,
                         help="Minimum value for the color scale")
     parser.add_argument("--vmax", type=float, default=None,
@@ -536,6 +672,25 @@ def build_parser():
                         help="Clip extremes at mean +/- 4*std: yes or no")
     parser.add_argument("--extend", type=str, default='both',
                         help="Colorbar extend: both/neither/min/max")
+
+    # Wind overlay (decomposed relative to the transect orientation)
+    parser.add_argument("-u", "--u_wind", type=str, default=None,
+                        help="Cell-centered zonal wind variable (e.g. "
+                             "uReconstructZonal); enables the wind overlay")
+    parser.add_argument("-v_wind", "--v_wind", type=str, default=None,
+                        help="Cell-centered meridional wind variable (e.g. "
+                             "uReconstructMeridional)")
+    parser.add_argument("-w", "--w_wind", type=str, default=None,
+                        help="Vertical velocity variable (e.g. w); tilts the "
+                             "in-plane arrows")
+    parser.add_argument("--w-exag", type=float, default=100.0,
+                        help="Vertical exaggeration applied to w for the arrow "
+                             "tilt (default: 100; qualitative)")
+    parser.add_argument("--wind-stride", type=int, default=None,
+                        help="Plot a wind symbol every Nth column (default: "
+                             "auto, ~30 across)")
+    parser.add_argument("--wind-lstride", type=int, default=3,
+                        help="Plot a wind symbol every Nth level (default: 3)")
 
     parser.add_argument("--dpi", type=int, default=150,
                         help="Output resolution (default: 150)")
@@ -562,6 +717,9 @@ def main(argv=None):
         zmax=args.zmax,
         cmap=args.cmap, vmin=args.vmin, vmax=args.vmax,
         clip=_yn(args.clip), extend=args.extend,
+        u_var=args.u_wind, v_var=args.v_wind, w_var=args.w_wind,
+        wind_stride=args.wind_stride, wind_lstride=args.wind_lstride,
+        w_exag=args.w_exag,
         dpi=args.dpi)
 
 

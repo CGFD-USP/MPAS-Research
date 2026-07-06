@@ -271,7 +271,7 @@ def set_plot_kwargs(da=None, clip=False, list_darrays=None, **kwargs):
                    and v is not None}
 
     if 'cmap' not in plot_kwargs:
-        plot_kwargs['cmap'] = 'Spectral'
+        plot_kwargs['cmap'] = 'Spectral_r'
 
     vmin = plot_kwargs.get('vmin', None)
     if vmin is None:
@@ -744,7 +744,7 @@ def _stitch_pngs(temp_files, outfile, fps):
 def run(file_pattern, vname=None, outfile=None,
         level=None, tstart=None, tend=None, list_times=False,
         gridfile=None, plotEdge=True, mask_land=False, clip=False,
-        cmap='Spectral', vmin=None, vmax=None, extend='both',
+        cmap='Spectral_r', vmin=None, vmax=None, extend='both',
         lat_min=None, lat_max=None, lon_min=None, lon_max=None,
         show_coastlines=True, u_var=None, v_var=None, stride=15,
         sum_vars=None, deaccumulate=False,
@@ -905,8 +905,8 @@ def build_parser():
     # Color
     parser.add_argument("-c", "--clip", type=str, default='no',
                         help="Clip extremes at mean +/- 4*std: yes or no")
-    parser.add_argument("--cmap", type=str, default='Spectral',
-                        help="Colormap (default: Spectral)")
+    parser.add_argument("--cmap", type=str, default='Spectral_r',
+                        help="Colormap (default: Spectral_r — red = higher)")
     parser.add_argument("--vmin", type=float, default=None,
                         help="Minimum value for the color scale")
     parser.add_argument("--vmax", type=float, default=None,
