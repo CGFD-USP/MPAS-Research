@@ -70,6 +70,8 @@ Author: Danilo Couto de Souza (2026).
 import os
 import sys
 import glob
+import shutil
+import tempfile
 import argparse
 
 import numpy as np
@@ -778,17 +780,23 @@ def run(infile, vname=None, gridfile=None, outfile=None,
         outfile = 'mpas_xsec_animation.mp4'
     print(f"{len(selected)} time steps selected -> animation: {outfile}  "
           f"(fps={fps}, dpi={dpi})")
-    temp_files = []
-    for i, frame in enumerate(tqdm(selected, desc="  Frames")):
-        fig, ax = plt.subplots(figsize=(11, 6))
-        render_field_frame(ax, fig, frame, geom, vname, plot_kwargs, **frame_kw)
-        tmp = f'_mpas_xsec_frame_{i:05d}.png'
-        fig.savefig(tmp, dpi=dpi, bbox_inches='tight')
-        plt.close(fig)
-        temp_files.append(tmp)
-    print("  Combining frames...")
-    _stitch_pngs(temp_files, outfile, fps)
-    print(f"Saved: {os.path.abspath(outfile)}")
+    # Frames go in a scratch tempdir (not the current directory) and are always
+    # cleaned up, even if rendering or video writing raises partway through.
+    tmpdir = tempfile.mkdtemp(prefix='mpas_xsec_frames_')
+    try:
+        temp_files = []
+        for i, frame in enumerate(tqdm(selected, desc="  Frames")):
+            fig, ax = plt.subplots(figsize=(11, 6))
+            render_field_frame(ax, fig, frame, geom, vname, plot_kwargs, **frame_kw)
+            tmp = os.path.join(tmpdir, f'_mpas_xsec_frame_{i:05d}.png')
+            fig.savefig(tmp, dpi=dpi, bbox_inches='tight')
+            plt.close(fig)
+            temp_files.append(tmp)
+        print("  Combining frames...")
+        _stitch_pngs(temp_files, outfile, fps)
+        print(f"Saved: {os.path.abspath(outfile)}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

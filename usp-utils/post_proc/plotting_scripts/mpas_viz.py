@@ -55,6 +55,9 @@ Unified framework: Danilo Couto de Souza (2026).
 import math
 import os
 import glob
+import shutil
+import tempfile
+import subprocess
 import argparse
 from multiprocessing import Pool, cpu_count
 
@@ -742,13 +745,13 @@ def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
 
 def _render_frame_to_png(args):
     """Worker: render one frame to a temporary PNG (for parallel animation)."""
-    (idx, frame, prev_frame, vname, plot_kwargs, kw, dpi) = args
+    (idx, frame, prev_frame, vname, plot_kwargs, kw, dpi, tmpdir) = args
 
     fig = plt.figure(figsize=(12, 8))
     ax = plt.axes(projection=ccrs.PlateCarree())
     render_one_frame(ax, frame, vname, plot_kwargs, fig=fig,
                      prev_frame=prev_frame, show_progress=False, **kw)
-    temp_file = f'_mpas_viz_frame_{idx:05d}.png'
+    temp_file = os.path.join(tmpdir, f'_mpas_viz_frame_{idx:05d}.png')
     fig.savefig(temp_file, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
     return temp_file
@@ -758,31 +761,54 @@ def _render_frame_to_png(args):
 # Output writers
 # ---------------------------------------------------------------------------
 def _stitch_pngs(temp_files, outfile, fps):
-    """Combine rendered PNG frames into a .gif or .mp4 and clean up temps."""
-    if outfile.endswith('.gif'):
-        from PIL import Image
-        images = [Image.open(f) for f in temp_files]
-        images[0].save(outfile, save_all=True, append_images=images[1:],
-                       duration=int(1000 / fps), loop=0, optimize=False)
-    else:
-        try:
-            import imageio
-            with imageio.get_writer(outfile, fps=fps) as writer:
-                for f in tqdm(temp_files, desc="  Writing video"):
-                    writer.append_data(imageio.imread(f))
-        except ImportError:
-            import subprocess
-            listfile = '_mpas_viz_filelist.txt'
+    """Combine rendered PNG frames into a .gif or .mp4; always remove the frames.
+
+    For video, FFmpeg is required. Its availability is checked explicitly (CLI
+    binary, then the ``imageio-ffmpeg`` plugin) rather than relying on
+    ``imageio`` to raise ``ImportError`` on a missing backend — it doesn't:
+    without a working video plugin it silently resolves to an unrelated one
+    (e.g. the always-available tifffile plugin), which then crashes deep inside
+    with a confusing error instead of naming the real problem.
+    """
+    try:
+        if outfile.endswith('.gif'):
+            from PIL import Image
+            images = [Image.open(f) for f in temp_files]
+            images[0].save(outfile, save_all=True, append_images=images[1:],
+                           duration=int(1000 / fps), loop=0, optimize=False)
+            return
+
+        ffmpeg_bin = shutil.which('ffmpeg')
+        if ffmpeg_bin is not None:
+            listfile = outfile + '.filelist.txt'
             with open(listfile, 'w') as f:
                 for img in temp_files:
-                    f.write(f"file '{img}'\nduration {1.0 / fps}\n")
-            subprocess.run(['ffmpeg', '-f', 'concat', '-safe', '0', '-i',
+                    f.write(f"file '{os.path.abspath(img)}'\n"
+                            f"duration {1.0 / fps}\n")
+            subprocess.run([ffmpeg_bin, '-f', 'concat', '-safe', '0', '-i',
                             listfile, '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
                             outfile, '-y'], check=True)
             os.remove(listfile)
+            return
 
-    for f in temp_files:
-        os.remove(f)
+        try:
+            import imageio_ffmpeg  # noqa: F401 -- presence check for imageio's video backend
+        except ImportError:
+            raise SystemExit(
+                "\nERROR: writing a video (.mp4/…) needs FFmpeg, which was not "
+                "found on this system:\n"
+                "         conda install -c conda-forge ffmpeg\n"
+                "       …or the Python-only plugin:\n"
+                "         pip install imageio-ffmpeg\n"
+                "       …or output a .gif instead (no FFmpeg needed).")
+        import imageio
+        with imageio.get_writer(outfile, fps=fps, format='FFMPEG') as writer:
+            for f in tqdm(temp_files, desc="  Writing video"):
+                writer.append_data(imageio.imread(f))
+    finally:
+        for f in temp_files:
+            if os.path.exists(f):
+                os.remove(f)
 
 
 # ---------------------------------------------------------------------------
@@ -876,25 +902,32 @@ def run(file_pattern, vname=None, outfile=None,
 
     prev_frames = [None] + selected[:-1] if deaccumulate else [None] * len(selected)
 
-    if n_jobs and n_jobs != 1:
-        if n_jobs == -1:
-            n_jobs = cpu_count()
-        print(f"  Rendering frames in parallel with {n_jobs} workers...")
-        args_list = [(i, selected[i], prev_frames[i], vname, plot_kwargs,
-                      frame_kw, dpi) for i in range(len(selected))]
-        with Pool(processes=n_jobs) as pool:
-            temp_files = list(tqdm(pool.imap(_render_frame_to_png, args_list),
-                                   total=len(selected), desc="  Frames"))
-    else:
-        print("  Rendering frames sequentially (use -j >1 for speedup)...")
-        temp_files = []
-        for i, frame in enumerate(tqdm(selected, desc="  Frames")):
-            temp_files.append(_render_frame_to_png(
-                (i, frame, prev_frames[i], vname, plot_kwargs, frame_kw, dpi)))
+    # Frames go in a scratch tempdir (not the current directory) and are always
+    # cleaned up, even if rendering or video writing raises partway through.
+    tmpdir = tempfile.mkdtemp(prefix='mpas_viz_frames_')
+    try:
+        if n_jobs and n_jobs != 1:
+            if n_jobs == -1:
+                n_jobs = cpu_count()
+            print(f"  Rendering frames in parallel with {n_jobs} workers...")
+            args_list = [(i, selected[i], prev_frames[i], vname, plot_kwargs,
+                          frame_kw, dpi, tmpdir) for i in range(len(selected))]
+            with Pool(processes=n_jobs) as pool:
+                temp_files = list(tqdm(pool.imap(_render_frame_to_png, args_list),
+                                       total=len(selected), desc="  Frames"))
+        else:
+            print("  Rendering frames sequentially (use -j >1 for speedup)...")
+            temp_files = []
+            for i, frame in enumerate(tqdm(selected, desc="  Frames")):
+                temp_files.append(_render_frame_to_png(
+                    (i, frame, prev_frames[i], vname, plot_kwargs, frame_kw,
+                     dpi, tmpdir)))
 
-    print("  Combining frames...")
-    _stitch_pngs(temp_files, outfile, fps)
-    print(f"Saved: {os.path.abspath(outfile)}")
+        print("  Combining frames...")
+        _stitch_pngs(temp_files, outfile, fps)
+        print(f"Saved: {os.path.abspath(outfile)}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

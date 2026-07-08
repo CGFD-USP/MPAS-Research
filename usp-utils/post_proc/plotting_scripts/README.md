@@ -21,8 +21,11 @@ Two complementary tools:
 conda activate cgfd-usp-mpas
 ```
 
-Relies on `xarray`, `numpy`, `matplotlib`, `cartopy` and `tqdm`. Animations need
-FFmpeg for `.mp4` (`conda install -c conda-forge ffmpeg`) or use `.gif` (Pillow).
+Relies on `xarray`, `numpy`, `matplotlib`, `cartopy` and `tqdm`. **Animations to
+`.mp4` need FFmpeg** — `conda install -c conda-forge ffmpeg` (or `pip install
+imageio-ffmpeg`) — otherwise both `mpas_viz.py` and `mpas_cross_section.py` exit
+with a clear error naming the missing dependency. No FFmpeg? Output `.gif`
+instead (needs only Pillow, already in the env).
 
 ---
 
