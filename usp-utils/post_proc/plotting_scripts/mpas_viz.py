@@ -531,6 +531,37 @@ def add_wind_vectors(ax, ds, u_da, v_da, stride=10, scale=None):
 # ---------------------------------------------------------------------------
 # Timeline (global ordered list of (file, time_index) frames)
 # ---------------------------------------------------------------------------
+def _time_arg(val):
+    """Argument type for --tstart/--tend/-t: accepts an integer index OR a
+    datetime string (e.g. '2021-11-01_00:00:00'). Resolution against the
+    actual timeline happens inside run()."""
+    try:
+        return int(val)
+    except ValueError:
+        return val  # datetime string — resolved later
+
+
+def _resolve_time_index(val, timeline):
+    """Resolve a time argument to a timeline integer index.
+
+    If *val* is already an int (or None), it is returned unchanged.
+    If it is a string it is matched against the ``xtime`` labels: the first
+    entry whose xtime **starts with** *val* is returned.  This lets you pass
+    a full timestamp like ``'2021-11-01_00:00:00'`` or just a date prefix
+    like ``'2021-11-01'``.
+    """
+    if val is None or isinstance(val, int):
+        return val
+    for frame in timeline:
+        if frame['xtime'].startswith(val):
+            return frame['gindex']
+    available = ', '.join(f['xtime'] for f in timeline[:5])
+    raise SystemExit(
+        f"\nERROR: datetime '{val}' not found in the timeline.\n"
+        f"First timestamps: {available} ...\n"
+        "Use --list-times to see all available timestamps.")
+
+
 def _decode_xtime(xtime_value):
     """Decode an MPAS xtime entry (bytes char array or str) to a clean string."""
     if isinstance(xtime_value, bytes):
@@ -853,6 +884,9 @@ def run(file_pattern, vname=None, outfile=None,
     # 4. Select the timeline sub-range (inclusive on both ends). Indices are
     #    clamped to the valid range so legacy '--tmax N' (which used to be an
     #    exclusive slice bound and could equal/exceed the count) still works.
+    #    tstart/tend may be datetime strings — resolve them to integer indices.
+    tstart = _resolve_time_index(tstart, timeline)
+    tend   = _resolve_time_index(tend,   timeline)
     last = len(timeline) - 1
     lo = 0 if tstart is None else max(0, tstart)
     hi = last if tend is None else min(last, tend)
@@ -972,11 +1006,15 @@ def build_parser():
                         help="Vertical level (for 3D fields)")
 
     # Time selection
-    parser.add_argument("--tstart", "--tmin", dest="tstart", type=int,
-                        default=None, help="First timeline index (inclusive)")
-    parser.add_argument("--tend", "--tmax", dest="tend", type=int, default=None,
-                        help="Last timeline index (inclusive)")
-    parser.add_argument("-t", "--time", dest="time", type=int, default=None,
+    parser.add_argument("--tstart", "--tmin", dest="tstart", type=_time_arg,
+                        default=None,
+                        help="First timeline index (int) or datetime string "
+                             "(e.g. '2021-11-01_00:00:00'), inclusive")
+    parser.add_argument("--tend", "--tmax", dest="tend", type=_time_arg,
+                        default=None,
+                        help="Last timeline index (int) or datetime string, "
+                             "inclusive")
+    parser.add_argument("-t", "--time", dest="time", type=_time_arg, default=None,
                         help="Single timeline index (shortcut for one still "
                              "image)")
     parser.add_argument("--list-times", action='store_true',

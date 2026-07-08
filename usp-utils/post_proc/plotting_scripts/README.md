@@ -179,17 +179,35 @@ files (`history.*.nc`) **or** held in one multi-step file (`x1.*.sfc_update.nc`)
 python mpas_viz.py -f x1.10242.sfc_update.nc --list-times
 ```
 
-Select a sub-range with `--tstart`/`--tend` (global indices, **inclusive**):
+Select a sub-range with `--tstart`/`--tend` (global indices or datetime strings,
+**inclusive**):
 
 - **1** step selected → still image (`.png`, `.pdf`, …)
 - **>1** steps selected → animation (`.mp4`, `.gif`)
 
+Both options accept an **integer index** (from `--list-times`) **or a datetime
+string** matching the `xtime` labels — full (`'2021-11-01_00:00:00'`) or just a
+date prefix (`'2021-11-01'`, which picks the first step on that date):
+
+```bash
+# By index
+python mpas_viz.py -f "diag.*.nc" -v t2m -gf mesh.static.nc \
+    --tstart 24 --tend 264 -o t2m.mp4
+
+# By datetime string — same result, no need to count indices
+python mpas_viz.py -f "diag.*.nc" -v t2m -gf mesh.static.nc \
+    --tstart 2021-11-01 --tend 2021-11-30_21:00:00 -o t2m.mp4
+```
+
 Omit `--tstart/--tend` to take the whole timeline. **For a single map from a
-multi-step file**, pick one step with `-t N` (index from `--list-times`):
+multi-step file**, pick one step with `-t` (index **or** datetime string):
 
 ```bash
 python mpas_viz.py -f x1.10242.sfc_update.nc -v sst -gf x1.10242.static.nc \
     -g no -ml yes -t 0 -o sst.png
+# or equivalently, by datetime string:
+python mpas_viz.py -f x1.10242.sfc_update.nc -v sst -gf x1.10242.static.nc \
+    -g no -ml yes -t 2021-11-01_00:00:00 -o sst.png
 ```
 
 ## Discover variables
@@ -258,8 +276,10 @@ python mpas_viz.py -f "history.*.nc" --sum-vars "rainc+rainnc" --deaccumulate -o
 - `-l, --level`: vertical level (3D fields)
 
 **Time**
-- `--tstart, --tend`: timeline range, inclusive (aliases: `--tmin`, `--tmax`)
-- `-t, --time`: single timeline index (one still image)
+- `--tstart, --tend`: timeline range, inclusive — integer index **or datetime
+  string** (e.g. `'2021-11-01_00:00:00'` or just `'2021-11-01'`); aliases:
+  `--tmin`, `--tmax`
+- `-t, --time`: single timeline index or datetime string (one still image)
 - `--list-times`: print the timeline and exit
 
 **Mesh / mask**
@@ -422,9 +442,11 @@ Color options (`--cmap` default `Spectral_r`, `--vmin/--vmax/-c/--extend`) and
 
 **Time / animation**
 - `--list-times`: print the timeline and exit
-- `--tstart, --tend`: timeline range, inclusive (aliases: `--tmin`, `--tmax`);
+- `--tstart, --tend`: timeline range, inclusive — integer index **or datetime
+  string** (e.g. `'2021-11-01_00:00:00'` or just `'2021-11-01'`); aliases:
+  `--tmin`, `--tmax`;
   one step → still image, several → animation
-- `-t, --time`: single timeline index (shortcut for one still)
+- `-t, --time`: single timeline index or datetime string (shortcut for one still)
 - `--fps`: animation frames per second (default 5)
 
 **Wind overlay** (decomposed relative to the transect)

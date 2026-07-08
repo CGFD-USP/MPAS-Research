@@ -91,6 +91,8 @@ from mpas_viz import (  # noqa: E402
     _stitch_pngs,
     _render_table,
     _yn,
+    _time_arg,
+    _resolve_time_index,
 )
 
 EARTH_RADIUS_KM = 6371.0
@@ -734,7 +736,10 @@ def run(infile, vname=None, gridfile=None, outfile=None,
     ds0.close()
 
     # 6. Select the timeline sub-range (inclusive). A field without a Time
-    #    dimension is inherently a single frame.
+    #    dimension is inherently a single frame. tstart/tend may be datetime
+    #    strings — resolve them to integer indices.
+    tstart = _resolve_time_index(tstart, timeline)
+    tend   = _resolve_time_index(tend,   timeline)
     last = len(timeline) - 1
     lo = 0 if tstart is None else max(0, tstart)
     hi = last if tend is None else min(last, tend)
@@ -843,11 +848,15 @@ def build_parser():
                         help="Cap the vertical axis at this height (m)")
 
     # Time selection (one step -> still image; several -> animation)
-    parser.add_argument("--tstart", "--tmin", dest="tstart", type=int,
-                        default=None, help="First timeline index (inclusive)")
-    parser.add_argument("--tend", "--tmax", dest="tend", type=int, default=None,
-                        help="Last timeline index (inclusive)")
-    parser.add_argument("-t", "--time", dest="time", type=int, default=None,
+    parser.add_argument("--tstart", "--tmin", dest="tstart", type=_time_arg,
+                        default=None,
+                        help="First timeline index (int) or datetime string "
+                             "(e.g. '2021-11-01_00:00:00'), inclusive")
+    parser.add_argument("--tend", "--tmax", dest="tend", type=_time_arg,
+                        default=None,
+                        help="Last timeline index (int) or datetime string, "
+                             "inclusive")
+    parser.add_argument("-t", "--time", dest="time", type=_time_arg, default=None,
                         help="Single timeline index (shortcut for one still)")
     parser.add_argument("--list-times", action='store_true',
                         help="Print the available time steps and exit")
