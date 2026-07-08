@@ -785,10 +785,18 @@ def _stitch_pngs(temp_files, outfile, fps):
                 for img in temp_files:
                     f.write(f"file '{os.path.abspath(img)}'\n"
                             f"duration {1.0 / fps}\n")
-            subprocess.run([ffmpeg_bin, '-f', 'concat', '-safe', '0', '-i',
-                            listfile, '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-                            outfile, '-y'], check=True)
+            result = subprocess.run(
+                [ffmpeg_bin, '-f', 'concat', '-safe', '0', '-i', listfile,
+                 # libx264 requires even width/height; matplotlib's
+                 # bbox_inches='tight' crop rarely lands on an even pixel
+                 # count, so force it here rather than fail mid-encode.
+                 '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                 '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outfile, '-y'])
             os.remove(listfile)
+            if result.returncode != 0:
+                raise SystemExit(
+                    f"\nERROR: ffmpeg exited with status {result.returncode} "
+                    f"while writing {outfile} (see the ffmpeg output above).")
             return
 
         try:
