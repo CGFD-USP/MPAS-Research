@@ -510,10 +510,40 @@ def plot_dual_mpas(da, ds, ax, plotEdge=True, show_progress=True, **plot_kwargs)
     return
 
 
-def add_wind_vectors(ax, ds, u_da, v_da, stride=10, scale=None):
-    """Overlay wind vectors (quiver) at cell centers, every ``stride``-th cell."""
-    lats = ds['latitude'].values[::stride]
-    lons = ds['longitude'].values[::stride]
+def _resolve_cell_coords(ds, gridfile=None):
+    """Return (lat, lon) arrays in degrees for cell centers.
+
+    Looks for ``latitude``/``longitude`` (degrees, MPAS convention) or
+    ``latCell``/``lonCell`` (radians) in *ds* first, then in *gridfile*.
+    Returns ``(None, None)`` when no coordinates are found.
+    """
+    def _try(d):
+        if 'latitude' in d and 'nCells' in d['latitude'].dims:
+            return d['latitude'].values, d['longitude'].values
+        if 'latCell' in d:
+            return (np.degrees(d['latCell'].values),
+                    np.degrees(d['lonCell'].values))
+        return None, None
+
+    lat, lon = _try(ds)
+    if lat is None and gridfile is not None and os.path.exists(gridfile):
+        try:
+            g = open_mpas_file(gridfile)
+            lat, lon = _try(g)
+            g.close()
+        except Exception:
+            pass
+    return lat, lon
+
+
+def add_wind_vectors(ax, lat, lon, u_da, v_da, stride=10, scale=None):
+    """Overlay wind vectors (quiver) at cell centers, every ``stride``-th cell.
+
+    *lat* and *lon* are 1-D degree arrays aligned with the nCells dimension
+    (obtain them via ``_resolve_cell_coords``).
+    """
+    lats = lat[::stride]
+    lons = lon[::stride]
     u = u_da.values[::stride]
     v = v_da.values[::stride]
 
@@ -758,7 +788,13 @@ def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
         if level is not None and 'nVertLevels' in u_frame.dims:
             u_frame = u_frame.isel(nVertLevels=level)
             v_frame = v_frame.isel(nVertLevels=level)
-        add_wind_vectors(ax, ds, u_frame, v_frame, stride=stride)
+        cell_lat, cell_lon = _resolve_cell_coords(ds, gridfile=gridfile)
+        if cell_lat is not None:
+            add_wind_vectors(ax, cell_lat, cell_lon, u_frame, v_frame,
+                             stride=stride)
+        else:
+            print("WARNING: lat/lon cell coordinates not found; "
+                  "wind vectors skipped. Supply -gf with a grid/static/init file.")
 
     title = f'{vname}'
     if level is not None and 'nVertLevels' in ds[vname].dims:
