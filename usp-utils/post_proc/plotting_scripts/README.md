@@ -70,7 +70,7 @@ right place and shape).
 ```bash
 # Cell resolution (km) on the native grid
 python mpas_viz.py -f $RUN/$MESH.grid.nc -v resolution -g no $BOUNDS \
-    -o $RUN/check_01_resolution.png
+    -o $RUN/${MESH}_check_01_grid_resolution.png
 ```
 
 **Look for:** the mesh outline in the right region; resolution values matching the
@@ -83,7 +83,7 @@ onto the mesh sensibly (coastlines, mountains in the right places).
 
 ```bash
 python mpas_viz.py -f $RUN/$MESH.static.nc -v ter -g no $BOUNDS \
-    -o $RUN/check_02_terrain.png
+    -o $RUN/${MESH}_check_02_static_terrain.png
 ```
 
 **Look for:** terrain following real orography; no NaN holes or obvious seams.
@@ -96,15 +96,15 @@ and the initial state.
 ```bash
 # 3a. Vertical LEVEL STRUCTURE + terrain along a transect (side view)
 python mpas_cross_section.py -f $RUN/$MESH.init.nc --levels-only \
-    --lat $TLAT --zmax 6000 -o $RUN/check_03a_levels.png
+    --lat $TLAT --zmax 6000 -o $RUN/${MESH}_check_03a_init_levels.png
 
 # 3b. Initial potential temperature cross-section
 python mpas_cross_section.py -f $RUN/$MESH.init.nc -v theta \
-    --lat $TLAT --zmax 15000 -o $RUN/check_03b_theta_init.png
+    --lat $TLAT --zmax 15000 -o $RUN/${MESH}_check_03b_init_theta.png
 
 # 3c. An initial field on the map (surface_pressure; also try relhum, skintemp/sst if present)
 python mpas_viz.py -f $RUN/$MESH.init.nc -v surface_pressure -g no $BOUNDS \
-    -o $RUN/check_03c_sfcpres_init.png
+    -o $RUN/${MESH}_check_03c_init_sfcpres.png
 ```
 
 **Look for:** (3a) levels hugging the terrain near the surface and flattening
@@ -123,7 +123,7 @@ python mpas_viz.py -f $RUN/$MESH.sfc_update.nc --list-times
 
 # SST at the first step, land masked (connectivity + landmask from static)
 python mpas_viz.py -f $RUN/$MESH.sfc_update.nc -v sst -gf $RUN/$MESH.static.nc \
-    -g no -ml yes -t 0 $BOUNDS -o $RUN/check_04_sst.png
+    -g no -ml yes -t 0 $BOUNDS -o $RUN/${MESH}_check_04_sfc_sst.png
 ```
 
 **Look for:** realistic SST gradients over the ocean; land correctly blanked with
@@ -142,16 +142,36 @@ python mpas_viz.py -f "$RUN/diag.<TIMESTAMP>.nc"
 
 # 5c. Animate MSLP over the whole run (parallel, no edges)
 python mpas_viz.py -f "$RUN/diag.*.nc" -v mslp -gf $RUN/$MESH.static.nc \
-    -g no -j -1 --fps 8 $BOUNDS -o $RUN/mslp_anim.mp4
+    -g no -j -1 --fps 8 $BOUNDS -o $RUN/${MESH}_diag_mslp_anim.mp4
 
-# 5d. Snapshot cross-section: theta + transect-relative wind from a history file
+# 5d. Animate 2-m temperature with 10-m wind vectors
+#     --stride controls how many cells to skip between vectors (avoids clutter).
+#     Suggested values by horizontal spacing:
+#       ~50 km mesh  -> --stride 5
+#       ~15 km mesh  -> --stride 15
+#       ~5 km mesh   -> --stride 40
+python mpas_viz.py -f "$RUN/diag.*.nc" -v t2m -gf $RUN/$MESH.static.nc \
+    -g no -j -1 --fps 8 $BOUNDS \
+    -u u10 -v_wind v10 --stride 15 \
+    -o $RUN/${MESH}_diag_t2m_wind_anim.mp4
+
+# 5e. Snapshot cross-section: theta + transect-relative wind from a history file
 python mpas_cross_section.py -f $RUN/history.<TIMESTAMP>.nc -gf $RUN/$MESH.init.nc \
-    -v theta --lat $TLAT -u uReconstructZonal -v_wind uReconstructMeridional -w w \
-    --zmax 12000 -o $RUN/xsec_theta_wind.png
+    -v theta --lat $TLAT \
+    -u uReconstructZonal -v_wind uReconstructMeridional -w w \
+    --zmax 12000 -o $RUN/${MESH}_history_xsec_theta_wind.png
 
-# 5e. Animate a cross-section across the run (several steps -> .mp4/.gif)
+# 5f. Animate a cross-section across the run with wind overlay
+#     --wind-stride controls column density; --wind-lstride controls level density.
+#     Suggested values by horizontal spacing:
+#       ~50 km mesh  -> --wind-stride 3  --wind-lstride 2
+#       ~15 km mesh  -> --wind-stride 8  --wind-lstride 3
+#       ~5 km mesh   -> --wind-stride 20 --wind-lstride 4
 python mpas_cross_section.py -f "$RUN/history.*.nc" -gf $RUN/$MESH.init.nc \
-    -v theta --lat $TLAT --zmax 15000 --fps 8 -o $RUN/xsec_theta.mp4
+    -v theta --lat $TLAT --zmax 15000 --fps 8 \
+    -u uReconstructZonal -v_wind uReconstructMeridional -w w \
+    --wind-stride 8 --wind-lstride 3 \
+    -o $RUN/${MESH}_history_xsec_theta_wind_anim.mp4
 ```
 
 **Look for:** systems tracking and evolving as expected; winds and vertical motion
