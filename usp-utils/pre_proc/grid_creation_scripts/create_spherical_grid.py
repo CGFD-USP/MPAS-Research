@@ -27,10 +27,15 @@ import jigsaw_util as jutil
 
 def main(args):
 
-    out_dir=os.getenv('MPAS_ROOT')+"/grids/"+args.output
-    out_base=os.path.basename(args.output)
-    out_basepath=out_dir+"/"+out_base
-    out_filename=out_dir+"/"+out_base+".nc"
+    mpas_root = os.getenv('MPAS_ROOT')
+    if not mpas_root:
+        print("ERROR: environment variable MPAS_ROOT is not set. Source usp-utils/setup_environment.sh first.")
+        sys.exit(1)
+
+    out_dir = mpas_root + "/grids/" + args.output
+    out_base = os.path.basename(args.output)
+    out_basepath = out_dir + "/" + out_base
+    out_filename = out_dir + "/" + out_base + ".nc"
     p = bool(args.plots)
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
