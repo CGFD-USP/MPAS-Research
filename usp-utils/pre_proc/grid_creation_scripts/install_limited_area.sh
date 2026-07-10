@@ -25,7 +25,7 @@ echo "==> Target install dir: $INSTALL_DIR"
 if ! python -c "import jigsawpy, mpas_tools" >/dev/null 2>&1; then
     echo "WARNING: 'jigsawpy'/'mpas_tools' not importable in the current python."
     echo "         You probably forgot to: conda activate cgfd-usp-mpas"
-    read -r -p "Continue anyway? [y/N] " ans
+    read -r -p "Continue anyway? [y/N] " ans || ans="N"   # || ans=N: avoid set -e exit on EOF (non-interactive)
     [ "${ans:-N}" = "y" ] || [ "${ans:-N}" = "Y" ] || { echo "Aborted."; exit 1; }
 fi
 
@@ -61,8 +61,10 @@ else
 fi
 
 # --- 3) Editable install into the active env ---------------------------------
-echo "==> pip install -e $INSTALL_DIR"
-pip install -e "$INSTALL_DIR"
+echo "==> python -m pip install -e $INSTALL_DIR"
+# Use 'python -m pip' so it installs into the same interpreter validated above
+# (a bare 'pip' on PATH may point at a different Python/env).
+python -m pip install -e "$INSTALL_DIR"
 
 # --- 4) Verify ---------------------------------------------------------------
 echo "==> Verifying ..."

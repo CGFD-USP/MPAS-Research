@@ -369,7 +369,7 @@ def build_global_mesh(opt, out_basepath, out_dir, out_filename,
     elif opt == "icos":
         level = int(l)
         if level > 11:
-            print("Please provide a reasonable refinment level - from 1 to 15."
+            print("Please provide a reasonable refinement level - from 1 to 11."
                   " Current value too large ", level)
             print(" Setting level to 4")
             level = 4
@@ -383,12 +383,13 @@ def build_global_mesh(opt, out_basepath, out_dir, out_filename,
                      output_name=out_basepath + '_triangles.nc',
                      on_sphere=True, sphere_radius=1.0)
 
-    # Convert to MPAS grid specific format
-    write_netcdf(
-        convert(xarray.open_dataset(out_basepath + '_triangles.nc'),
-                dir=out_dir,
-                graphInfoFileName=out_basepath + "_graph.info"),
-        out_filename)
+    # Convert to MPAS grid specific format (close the input dataset afterwards
+    # so it does not leak file descriptors / keep the NetCDF file locked).
+    with xarray.open_dataset(out_basepath + '_triangles.nc') as triangles:
+        write_netcdf(
+            convert(triangles, dir=out_dir,
+                    graphInfoFileName=out_basepath + "_graph.info"),
+            out_filename)
 
     # Clean-up intermediary files
     _cleanup_intermediate(out_basepath, out_dir)

@@ -6,10 +6,12 @@ front-ends; the actual mesh logic lives in the shared modules under
 
 ## Setup (read first)
 
-These scripts run in the `cgfd-usp-mpas` conda env (it provides `jigsawpy`,
-`mpas_tools`, the `jigsaw` binary, `create_region` for regional meshes, and
-`gpmetis` for partitioning — see section 3).
-Before running, activate it and source the usp-utils environment so the
+These scripts run in the `cgfd-usp-mpas` conda env, which provides `jigsawpy`,
+`mpas_tools` and the `jigsaw` binary. Two extra tools are used but are **not**
+part of the base env and must be installed once (per machine): `create_region`
+for regional meshes (see section 2) and `gpmetis` for partitioning (see
+section 3).
+Before running, activate the env and source the usp-utils environment so the
 libraries are on `PYTHONPATH` and `MPAS_ROOT` is defined:
 
 ```bash

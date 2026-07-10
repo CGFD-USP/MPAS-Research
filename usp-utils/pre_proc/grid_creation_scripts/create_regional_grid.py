@@ -94,11 +94,13 @@ def main(args):
             print("ERROR: --shape polygon needs --polygon-file FILE.")
             sys.exit(1)
         boundary_points = rutil.read_polygon_file(args.polygon_file)
-        # use a user-given inside point, else the polygon centroid
+        # Use a user-given inside point, else a point guaranteed to be inside
+        # the polygon (robust for concave shapes, where the vertex mean can
+        # fall outside and make create_region fail).
         if args.clat is not None and args.clon is not None:
             clat, clon = args.clat, args.clon
         else:
-            clat, clon = rutil.polygon_center(boundary_points)
+            clat, clon = rutil.polygon_inside_point(boundary_points)
         area_radius = rutil.max_radius_km(clat, clon, boundary_points)
 
     else:

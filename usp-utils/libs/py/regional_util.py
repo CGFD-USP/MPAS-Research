@@ -96,6 +96,24 @@ def polygon_center(points):
     return sum(lats) / len(lats), sum(lons) / len(lons)
 
 
+def polygon_inside_point(points):
+    """
+    Return a (lat, lon) point guaranteed to be inside the polygon.
+
+    MPAS-Limited-Area needs the reference point to lie inside the region, and
+    for concave polygons the vertex mean (``polygon_center``) can fall outside.
+    Use shapely's representative_point() when available, otherwise fall back to
+    the vertex mean. ``points`` is a list of (lat, lon) tuples.
+    """
+    try:
+        from shapely.geometry import Polygon
+        poly = Polygon([(lon, lat) for (lat, lon) in points])
+        pt = poly.representative_point()
+        return pt.y, pt.x  # (lat, lon)
+    except Exception:
+        return polygon_center(points)
+
+
 def max_radius_km(clat, clon, points):
     """Largest great-circle distance (km) from (clat, clon) to any point."""
     return float(max(latlon_to_distance_center(plon, plat, clon=clon, clat=clat)
