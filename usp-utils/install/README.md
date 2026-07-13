@@ -6,14 +6,20 @@ A minimal toolchain for compiling and running MPAS-Atmosphere v8.
 > [`environment_setup.md`](environment_setup.md). This file is only about
 > building and running the model.
 
-## Why so few libraries?
+## Quick start
+
+You need three things: a Fortran/C **compiler**, an **MPI** library, and
+**PnetCDF**. The compiler is almost always already on the machine; this guide
+helps you find out whether MPI is there too, and builds PnetCDF for you.
+
+> **Where do I run these?** Run everything below from the **MPAS repository
+> root**, e.g. `cd /home/your-user/Downloads/MPAS-Research`. (Only the final
+> `make` strictly requires it — the install script and the `source` use absolute
+> paths and would work from anywhere — but staying at the root keeps every
+> command below copy-pastable.)
 
 MPAS v8 bundles its own I/O layer, **SMIOL** (`src/external/SMIOL`), and uses it
-automatically whenever the `PIO` environment variable is **unset**. In that mode
-the only external I/O dependency is **PnetCDF**. There is no need for PIO,
-NetCDF-C, NetCDF-Fortran, HDF5 or zlib.
-
-So the full dependency set is just:
+automatically whenever the `PIO` environment variable is **unset**. The full dependency set is:
 
 | Component  | Source                                   | Notes                                     |
 |------------|------------------------------------------|-------------------------------------------|
@@ -24,17 +30,6 @@ So the full dependency set is just:
 > Prefer the MPI provided by your system or HPC site — it is usually tuned for
 > the local interconnect (e.g. InfiniBand). Only build MPICH yourself when no
 > system MPI is available.
-
-## Quick start
-
-You need three things: a Fortran/C **compiler**, an **MPI** library, and
-**PnetCDF**. The compiler is almost always already on the machine; this guide
-helps you find out whether MPI is there too, and builds PnetCDF for you.
-
-> Where do I run these? The install commands and `source` work from **any
-> directory** (all paths are absolute). Only the final `make` must run from the
-> MPAS repository root. Below we assume you start at the repo root, e.g.
-> `cd /p1-swell/danilocs/MPAS-Research`.
 
 ### Step 1 — check what you already have
 
