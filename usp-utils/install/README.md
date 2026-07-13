@@ -72,17 +72,38 @@ source /path/to/MPAS-Research/usp-utils/install/mpas_build_env.sh
 # then cd into the MPAS source you want to build -- the folder that contains the
 # top-level `Makefile` -- and run make THERE (this is the only step that cares
 # about the current directory):
-cd /path/to/MPAS-Research        # <- replace with your actual repo/worktree path
-make gnu CORE=init_atmosphere
-make clean CORE=atmosphere && make gnu CORE=atmosphere
+cd /path/to/MPAS-Research        # <- replace with your actual repo path
+make gnu CORE=init_atmosphere AUTOCLEAN=true
+make gnu CORE=atmosphere      AUTOCLEAN=true
 ```
+
+`AUTOCLEAN=true` re-cleans the tree automatically when it still holds objects
+from an earlier build with different options; without it the build aborts with
+*"previously compiled with incompatible options"*.
+
+> **Precision — single is the default (and usually what you want).** Since MPAS
+> v8.1/8.2 the default real kind is **single** precision (the `Makefile` help
+> says: *"Default is to use single-precision"*). It runs faster, uses less RAM
+> and writes smaller output, and NCAR reports no accuracy or stability
+> degradation for typical forecasts — so it is the right choice for most runs,
+> and it is what the commands above build.
+>
+> The trade-off is resolution: the smallest representable relative error is
+> ~2e-7 in single, against ~2e-16 in double. If your analysis depends on small
+> residuals of large terms (energy budgets, conversion / energetics diagnostics),
+> build in double instead. The flag must be passed to **both** cores:
+>
+> ```bash
+> make gnu CORE=init_atmosphere PRECISION=double AUTOCLEAN=true
+> make gnu CORE=atmosphere      PRECISION=double AUTOCLEAN=true
+> ```
 
 Common errors:
 - `The PNETCDF environment variable isn't set` — you skipped the `source` line
   (or opened a new terminal; re-run it).
-- `... previously compiled with incompatible options` — that source tree has
-  leftover objects from an earlier build; run `make clean CORE=<core>` first, or
-  add `AUTOCLEAN=true` to the `make` command.
+- `... previously compiled with incompatible options` — the source tree holds
+  leftover objects from an earlier build. `AUTOCLEAN=true` (above) handles this;
+  otherwise run `make clean CORE=<core>` first.
 
 ### Step 4 — run the model (same env, in EVERY new shell)
 

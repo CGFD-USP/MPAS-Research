@@ -5,8 +5,13 @@
 #
 #   source usp-utils/install/mpas_build_env.sh
 #   cd "$MPAS_ROOT"
-#   make gnu CORE=init_atmosphere
-#   make clean CORE=atmosphere && make gnu CORE=atmosphere
+#   make gnu CORE=init_atmosphere AUTOCLEAN=true
+#   make gnu CORE=atmosphere      AUTOCLEAN=true
+#
+# That builds in single precision, the MPAS default since v8.1/8.2 -- faster,
+# lighter, and fine for most runs. Add PRECISION=double to BOTH cores if your
+# analysis relies on small residuals of large terms (energy budgets, energetics
+# diagnostics); see README.md for the trade-off.
 #
 # No PIO / NetCDF / HDF5: with PIO unset, MPAS v8 links its bundled SMIOL I/O
 # layer and only needs PnetCDF. MPI + compilers should come from the system /
