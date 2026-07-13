@@ -27,7 +27,7 @@ LIBBASE="${MPAS_LIBS:-$HOME/mpas-build/libs}"      # install prefix
 SRCDIR="${MPAS_SRC:-$HOME/mpas-build/sources}"     # tarball download/extract dir
 BUILD_MPICH="${BUILD_MPICH:-0}"                    # 1 = build MPICH from source
 MPICH_VERSION="${MPICH_VERSION:-4.2.3}"            # see https://www.mpich.org/downloads/
-PNETCDF_VERSION="${PNETCDF_VERSION:-1.13.0}"       # see https://parallel-netcdf.github.io/
+PNETCDF_VERSION="${PNETCDF_VERSION:-1.14.1}"       # see https://parallel-netcdf.github.io/
 JOBS="${JOBS:-4}"
 
 mkdir -p "$LIBBASE" "$SRCDIR"

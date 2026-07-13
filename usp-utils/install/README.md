@@ -136,15 +136,5 @@ Both scripts read overridable environment variables (with sensible defaults):
 | `MPAS_SRC`        | `$HOME/mpas-build/sources` | tarball download / extract dir              |
 | `BUILD_MPICH`     | `0`                      | set `1` to build MPICH from source            |
 | `MPICH_VERSION`   | `4.2.3`                  | see <https://www.mpich.org/downloads/>        |
-| `PNETCDF_VERSION` | `1.13.0`                 | see <https://parallel-netcdf.github.io/>      |
+| `PNETCDF_VERSION` | `1.14.1`                 | see <https://parallel-netcdf.github.io/>      |
 | `MPI_HOME`        | *(empty)*                | set only for a self-built / non-system MPI    |
-
-## `make gnu` vs `make gfortran`
-
-The two GNU targets in the top-level `Makefile` differ **only** in two
-compile-time diagnostic flags present in the `gnu` recipe: `-std=f2008` and
-`-fimplicit-none` (in both `FFLAGS_OPT` and `FFLAGS_DEBUG`). Everything else —
-compilers, `-fdefault-real-8`, `-O3`, big-endian conversion, OpenMP — is
-identical. Neither flag changes code generation, optimisation, numeric KINDs or
-endianness, so the produced binaries are numerically identical. `make gnu` is
-just the stricter target and is the recommended one.
