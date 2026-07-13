@@ -14,8 +14,8 @@ once, then activate them every session.
 bash install_conda_environment.sh
 
 # Julia shared environment 'cgfd-usp-mpas'.
-# MUST run with `env -u LD_LIBRARY_PATH`, otherwise Julia segfaults against the
-# conda/MPAS libraries:
+# `env -u LD_LIBRARY_PATH` is a safety net, not always required -- see the note
+# on LD_LIBRARY_PATH below. It is harmless when unnecessary:
 env -u LD_LIBRARY_PATH julia install_julia_environment.jl
 ```
 
@@ -44,7 +44,41 @@ you do pre-processing and run the model in the same shell.
 
 ## Notes
 
-- Julia always needs `env -u LD_LIBRARY_PATH` (the conda/MPAS libraries make a
-  plain `julia` segfault).
-- New Python **modules** (files with definitions imported by other scripts) go in
-  `../libs/py`, not next to the scripts that import them.
+### `LD_LIBRARY_PATH` and Julia (when `env -u` is actually needed)
+
+Julia ships **its own copies** of several common libraries (`libcurl.so.4`,
+`libcrypto.so.3`, `libgcc_s.so.1`, `libgfortran.so.5`, `libgomp.so.1`,
+`libgmp.so.10`, …) under `<julia>/lib/julia`. If `LD_LIBRARY_PATH` points at a
+directory that carries *different builds of those same SONAMEs*, the dynamic
+loader picks those instead of Julia's own, and Julia crashes with a segfault as
+soon as it loads `Pkg` (which uses libcurl/TLS).
+
+**This is not always a problem.** On a machine where `LD_LIBRARY_PATH` is empty —
+the common case — plain `julia` works fine. Check yours:
+
+```bash
+echo $LD_LIBRARY_PATH        # empty -> you don't need `env -u` at all
+```
+
+Measured on this stack (Julia 1.12, `import Pkg`):
+
+| `LD_LIBRARY_PATH` contains          | Result       |
+|-------------------------------------|--------------|
+| *(empty)*                           | works        |
+| the MPAS build libs (MPICH/PnetCDF) | works — no SONAME overlap with Julia |
+| an active conda env's `lib/`        | **segfault** |
+| `/usr/lib/x86_64-linux-gnu`         | **segfault** |
+
+So the MPAS build environment is **not** the culprit; a populated system or conda
+library path is. Where `LD_LIBRARY_PATH` is set (some systems export it globally
+from the shell profile), run Julia with it cleared — it is harmless when it was
+not needed anyway:
+
+```bash
+env -u LD_LIBRARY_PATH julia <script>.jl
+```
+
+### Python modules
+
+New Python **modules** (files with definitions imported by other scripts) go in
+`../libs/py`, not next to the scripts that import them.
