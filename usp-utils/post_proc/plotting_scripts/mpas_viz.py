@@ -440,7 +440,7 @@ def plot_cells_mpas(da, ds, ax, plotEdge=True, gridfile=None, mask_land=False,
 
     for cell in iterator:
         # Skip land cells when masking is enabled (landmask == 1 over land)
-        if landmask is not None and int(landmask.sel(nCells=cell)) == 1:
+        if landmask is not None and landmask.sel(nCells=cell).item() == 1:
             continue
 
         value = da.sel(nCells=cell)
@@ -460,7 +460,7 @@ def plot_cells_mpas(da, ds, ax, plotEdge=True, gridfile=None, mask_land=False,
                            cmap=plot_kwargs.get('cmap', 'Spectral'))
 
         # Wrap polygons that straddle the +/-180 antimeridian.
-        if max(lons) > 170 and min(lons) < -170:
+        if lons.max().item() > 170 and lons.min().item() < -170:
             lons = xr.where(lons >= 170.0, lons - 360.0, lons)
 
         if plotEdge:
@@ -494,7 +494,7 @@ def plot_dual_mpas(da, ds, ax, plotEdge=True, show_progress=True, **plot_kwargs)
                            vmax=plot_kwargs['vmax'],
                            cmap=plot_kwargs.get('cmap', 'Spectral'))
 
-        if max(lons) > 170 and min(lons) < -170:
+        if lons.max().item() > 170 and lons.min().item() < -170:
             lons = xr.where(lons >= 170.0, lons - 360.0, lons)
 
         if plotEdge:
@@ -666,6 +666,7 @@ def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
                        **plot_kwargs)
     else:
         print(f"WARNING  cannot plot variable with dimensions {da.dims}")
+        ds.close()
         return
 
     if u_var is not None and v_var is not None \
@@ -714,7 +715,13 @@ def _stitch_pngs(temp_files, outfile, fps):
     """Combine rendered PNG frames into a .gif or .mp4 and clean up temps."""
     if outfile.endswith('.gif'):
         from PIL import Image
-        images = [Image.open(f) for f in temp_files]
+        # Load each frame inside a context manager and keep an in-memory copy,
+        # so the file descriptors are released promptly (many frames would
+        # otherwise exhaust the OS file-descriptor limit).
+        images = []
+        for f in temp_files:
+            with Image.open(f) as im:
+                images.append(im.copy())
         images[0].save(outfile, save_all=True, append_images=images[1:],
                        duration=int(1000 / fps), loop=0, optimize=False)
     else:
