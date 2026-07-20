@@ -9,7 +9,9 @@ once, then activate them every session.
 
 ## 1. Install (run once; re-run to update)
 
-```bash
+~~~bash
+cd usp-utils/install
+
 # Python environment 'cgfd-usp-mpas' (built from ../libs/cgfd-usp-mpas.yml):
 bash install_conda_environment.sh
 
@@ -17,7 +19,7 @@ bash install_conda_environment.sh
 # `env -u LD_LIBRARY_PATH` is a safety net, not always required -- see the note
 # on LD_LIBRARY_PATH below. It is harmless when unnecessary:
 env -u LD_LIBRARY_PATH julia install_julia_environment.jl
-```
+~~~
 
 Both scripts are idempotent — re-running them updates the existing environments.
 
