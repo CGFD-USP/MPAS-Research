@@ -4,7 +4,7 @@
 # mpas_lib_install.sh (PnetCDF only). Source this before running `make`:
 #
 #   source usp-utils/install/mpas_build_env.sh
-#   cd "$MPAS_ROOT"
+#   cd /path/to/MPAS-Research   # repo root (folder with top-level Makefile)
 #   make gnu CORE=init_atmosphere AUTOCLEAN=true
 #   make gnu CORE=atmosphere      AUTOCLEAN=true
 #
