@@ -45,7 +45,7 @@ fi
 # (the env may exist even if a transient activate call returns non-zero).
 if conda env list 2> /dev/null | awk '{print $1}' | grep -qx 'cgfd-usp-mpas'; then
     conda activate cgfd-usp-mpas
-    echo -e "${INFO} Conda enviroment 'cgfd-usp-mpas' activated"
+    echo -e "${INFO} Conda environment 'cgfd-usp-mpas' activated"
 else
     echo -e "${WARNING} The 'cgfd-usp-mpas' conda environment was not found. It will not be activated and Python scripts might not work. To install it, run: bash $SCRIPT_DIR/install_conda_environment.sh"
     return 1
