@@ -202,6 +202,16 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     return 2.0 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(a))
 
 
+def _lonlat_to_unit(lat_deg, lon_deg):
+    """Convert lon/lat (degrees) to 3-D unit vectors on the sphere."""
+    lat = np.radians(np.asarray(lat_deg, dtype=float))
+    lon = np.radians(np.asarray(lon_deg, dtype=float))
+    cos_lat = np.cos(lat)
+    return np.column_stack([cos_lat * np.cos(lon),
+                            cos_lat * np.sin(lon),
+                            np.sin(lat)])
+
+
 def _parse_point(text, name):
     """Parse a 'lat,lon' CLI string into (lat, lon) floats."""
     try:
@@ -261,15 +271,33 @@ def sample_transect(lat0, lon0, lat1, lon1, lat_cell, lon_cell, npoints,
     plat = np.linspace(lat0, lat1, npoints)
     plon = np.linspace(lon0, lon1, npoints)
 
-    picked = []
-    n_outside = 0
-    for la, lo in zip(plat, plon):
-        d = _haversine_km(lat_cell, lon_cell, la, lo)
-        j = int(np.argmin(d))
-        if max_snap_km is not None and d[j] > max_snap_km:
-            n_outside += 1
-            continue
-        picked.append(j)
+    # Nearest cell for each sample point. Use a KDTree on 3-D unit vectors
+    # (~O(npoints·log nCells)) instead of a full haversine scan per point
+    # (O(npoints·nCells)); fall back to the brute-force scan without SciPy.
+    # Nearest-by-chord and nearest-by-great-circle agree (both monotonic in the
+    # angle), and the snap threshold is converted exactly to a chord length.
+    try:
+        from scipy.spatial import cKDTree
+        tree = cKDTree(_lonlat_to_unit(lat_cell, lon_cell))
+        chord, idx = tree.query(_lonlat_to_unit(plat, plon))
+        if max_snap_km is not None:
+            angle = max_snap_km / EARTH_RADIUS_KM
+            chord_max = 2.0 * np.sin(angle / 2.0)
+            inside = chord <= chord_max
+        else:
+            inside = np.ones(npoints, dtype=bool)
+        n_outside = int((~inside).sum())
+        picked = [int(j) for j, keep in zip(idx, inside) if keep]
+    except ImportError:
+        picked = []
+        n_outside = 0
+        for la, lo in zip(plat, plon):
+            d = _haversine_km(lat_cell, lon_cell, la, lo)
+            j = int(np.argmin(d))
+            if max_snap_km is not None and d[j] > max_snap_km:
+                n_outside += 1
+                continue
+            picked.append(j)
 
     if not picked:
         raise SystemExit(
@@ -546,6 +574,9 @@ def _field_at_cells(ds, vname, tindex, cells):
     da = ds[vname]
     if 'Time' in da.dims:
         da = da.isel(Time=tindex)
+    # Guarantee (nCells, nVertLevels) order before positional indexing, so a
+    # non-standard stored dim order cannot silently index the wrong axis.
+    da = da.transpose('nCells', 'nVertLevels')
     return da.values[cells, :].T, da
 
 
@@ -721,7 +752,7 @@ def run(infile, vname=None, gridfile=None, outfile=None,
     if vname not in ds0:
         raise SystemExit(f"\nERROR: variable '{vname}' not found in the file(s).")
     da0 = ds0[vname]
-    if 'nVertLevels' not in da0.dims:
+    if 'nCells' not in da0.dims or 'nVertLevels' not in da0.dims:
         hint = ""
         if vname == 'ter' or ('nCells' in da0.dims and da0.ndim <= 2):
             hint = ("\n       To see the terrain along the transect (it is "
