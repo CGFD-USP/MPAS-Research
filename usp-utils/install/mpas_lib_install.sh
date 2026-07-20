@@ -32,7 +32,11 @@ JOBS="${JOBS:-4}"
 
 mkdir -p "$LIBBASE" "$SRCDIR"
 export PATH="$LIBBASE/bin:$PATH"
-export LD_LIBRARY_PATH="$LIBBASE/lib:${LD_LIBRARY_PATH:-}"
+if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+    export LD_LIBRARY_PATH="$LIBBASE/lib:$LD_LIBRARY_PATH"
+else
+    export LD_LIBRARY_PATH="$LIBBASE/lib"
+fi
 
 # gfortran >= 10 rejects the legacy mismatched-argument MPI calls by default;
 # this downgrades it to a warning so configure tests pass.
