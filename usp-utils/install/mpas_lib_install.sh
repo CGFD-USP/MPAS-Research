@@ -87,7 +87,7 @@ echo
 echo "=== Done. Lean MPAS dependencies installed under: $LIBBASE ==="
 echo "Next steps:"
 echo "  source \"\$(dirname \"\$0\")/mpas_build_env.sh\""
-echo "  cd \"\$MPAS_ROOT\""
+echo "  cd /path/to/MPAS-Research   # <- repo root (folder with top-level Makefile)"
 echo "  make gnu CORE=init_atmosphere AUTOCLEAN=true   # PIO unset -> bundled SMIOL"
 echo "  make gnu CORE=atmosphere      AUTOCLEAN=true"
 echo
