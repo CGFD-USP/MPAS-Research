@@ -29,18 +29,24 @@ fi
 export PYTHONPATH="$SCRIPT_DIR/libs/py:$PYTHONPATH"
 echo -e "${INFO} New enviroment variable set: PYTHONPATH=$PYTHONPATH"
 
-conda &> /dev/null
-status=$?
-if [ ! $status == "0" ]; then
-    echo -e "${WARNING} Couldn't find 'conda' binary, 'cgfd-usp-mpas' conda environment will not be activated. Python scripts might not work."
+if ! command -v conda &> /dev/null; then
+    echo -e "${WARNING} Couldn't find 'conda', the 'cgfd-usp-mpas' conda environment will not be activated. Python scripts might not work."
     return 1
 fi
 
-conda activate cgfd-usp-mpas &> /dev/null
-status=$?
-if [ ! $status == "0" ]; then
-    echo -e "${WARNING} Couldn't find the 'cgfd-usp-mpas' conda environment. It will not be activated and Python scripts might not work. If you wish to install the conda environment please run the script in $SCRIPT_DIR/install_conda_environment.sh"
-    return 1
+# 'conda activate' needs the 'conda' shell function; load it if only the binary
+# is on PATH (e.g. in a shell where 'conda init' hasn't run).
+if ! type conda 2> /dev/null | grep -q 'function'; then
+    __conda_sh="$(conda info --base 2> /dev/null)/etc/profile.d/conda.sh"
+    [ -f "$__conda_sh" ] && source "$__conda_sh"
 fi
 
-echo -e "${INFO} Conda enviroment 'cgfd-usp-mpas' activated"
+# Decide from the actual list of environments, not from 'activate's exit code
+# (the env may exist even if a transient activate call returns non-zero).
+if conda env list 2> /dev/null | awk '{print $1}' | grep -qx 'cgfd-usp-mpas'; then
+    conda activate cgfd-usp-mpas
+    echo -e "${INFO} Conda enviroment 'cgfd-usp-mpas' activated"
+else
+    echo -e "${WARNING} The 'cgfd-usp-mpas' conda environment was not found. It will not be activated and Python scripts might not work. To install it, run: bash $SCRIPT_DIR/install_conda_environment.sh"
+    return 1
+fi
