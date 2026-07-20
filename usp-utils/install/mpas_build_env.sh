@@ -28,14 +28,24 @@
 # Self-built MPICH installed into $MPAS_LIBS, or a separate $MPI_HOME, on PATH.
 # For a system/module MPI: leave MPI_HOME empty and `module load` it beforehand.
 export PATH="$MPAS_LIBS/bin:$PATH"
+
 if [ -n "$MPI_HOME" ]; then
     export PATH="$MPI_HOME/bin:$PATH"
-    export LD_LIBRARY_PATH="$MPI_HOME/lib:${LD_LIBRARY_PATH:-}"
+    if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+        export LD_LIBRARY_PATH="$MPI_HOME/lib:$LD_LIBRARY_PATH"
+    else
+        export LD_LIBRARY_PATH="$MPI_HOME/lib"
+    fi
 fi
 
 export PNETCDF="$MPAS_LIBS"
 unset PIO NETCDF                          # -> SMIOL path, no stray NetCDF linkage
-export LD_LIBRARY_PATH="$MPAS_LIBS/lib:${LD_LIBRARY_PATH:-}"
+
+if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+    export LD_LIBRARY_PATH="$MPAS_LIBS/lib:$LD_LIBRARY_PATH"
+else
+    export LD_LIBRARY_PATH="$MPAS_LIBS/lib"
+fi
 
 echo "[INFO] MPAS lean env: PNETCDF=$PNETCDF  (PIO/NETCDF unset -> SMIOL I/O)"
 echo "[INFO] mpif90 -> $(command -v mpif90 || echo 'NOT FOUND - load a system MPI or set MPI_HOME')"
