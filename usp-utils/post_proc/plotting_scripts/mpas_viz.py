@@ -55,6 +55,9 @@ Unified framework: Danilo Couto de Souza (2026).
 import math
 import os
 import glob
+import shutil
+import tempfile
+import subprocess
 import argparse
 from multiprocessing import Pool, cpu_count
 
@@ -271,7 +274,7 @@ def set_plot_kwargs(da=None, clip=False, list_darrays=None, **kwargs):
                    and v is not None}
 
     if 'cmap' not in plot_kwargs:
-        plot_kwargs['cmap'] = 'Spectral'
+        plot_kwargs['cmap'] = 'Spectral_r'
 
     vmin = plot_kwargs.get('vmin', None)
     if vmin is None:
@@ -507,10 +510,40 @@ def plot_dual_mpas(da, ds, ax, plotEdge=True, show_progress=True, **plot_kwargs)
     return
 
 
-def add_wind_vectors(ax, ds, u_da, v_da, stride=10, scale=None):
-    """Overlay wind vectors (quiver) at cell centers, every ``stride``-th cell."""
-    lats = ds['latitude'].values[::stride]
-    lons = ds['longitude'].values[::stride]
+def _resolve_cell_coords(ds, gridfile=None):
+    """Return (lat, lon) arrays in degrees for cell centers.
+
+    Looks for ``latitude``/``longitude`` (degrees, MPAS convention) or
+    ``latCell``/``lonCell`` (radians) in *ds* first, then in *gridfile*.
+    Returns ``(None, None)`` when no coordinates are found.
+    """
+    def _try(d):
+        if 'latitude' in d and 'nCells' in d['latitude'].dims:
+            return d['latitude'].values, d['longitude'].values
+        if 'latCell' in d:
+            return (np.degrees(d['latCell'].values),
+                    np.degrees(d['lonCell'].values))
+        return None, None
+
+    lat, lon = _try(ds)
+    if lat is None and gridfile is not None and os.path.exists(gridfile):
+        try:
+            g = open_mpas_file(gridfile)
+            lat, lon = _try(g)
+            g.close()
+        except Exception:
+            pass
+    return lat, lon
+
+
+def add_wind_vectors(ax, lat, lon, u_da, v_da, stride=10, scale=None):
+    """Overlay wind vectors (quiver) at cell centers, every ``stride``-th cell.
+
+    *lat* and *lon* are 1-D degree arrays aligned with the nCells dimension
+    (obtain them via ``_resolve_cell_coords``).
+    """
+    lats = lat[::stride]
+    lons = lon[::stride]
     u = u_da.values[::stride]
     v = v_da.values[::stride]
 
@@ -528,6 +561,37 @@ def add_wind_vectors(ax, ds, u_da, v_da, stride=10, scale=None):
 # ---------------------------------------------------------------------------
 # Timeline (global ordered list of (file, time_index) frames)
 # ---------------------------------------------------------------------------
+def _time_arg(val):
+    """Argument type for --tstart/--tend/-t: accepts an integer index OR a
+    datetime string (e.g. '2021-11-01_00:00:00'). Resolution against the
+    actual timeline happens inside run()."""
+    try:
+        return int(val)
+    except ValueError:
+        return val  # datetime string — resolved later
+
+
+def _resolve_time_index(val, timeline):
+    """Resolve a time argument to a timeline integer index.
+
+    If *val* is already an int (or None), it is returned unchanged.
+    If it is a string it is matched against the ``xtime`` labels: the first
+    entry whose xtime **starts with** *val* is returned.  This lets you pass
+    a full timestamp like ``'2021-11-01_00:00:00'`` or just a date prefix
+    like ``'2021-11-01'``.
+    """
+    if val is None or isinstance(val, int):
+        return val
+    for frame in timeline:
+        if frame['xtime'].startswith(val):
+            return frame['gindex']
+    available = ', '.join(f['xtime'] for f in timeline[:5])
+    raise SystemExit(
+        f"\nERROR: datetime '{val}' not found in the timeline.\n"
+        f"First timestamps: {available} ...\n"
+        "Use --list-times to see all available timestamps.")
+
+
 def _decode_xtime(xtime_value):
     """Decode an MPAS xtime entry (bytes char array or str) to a clean string."""
     if isinstance(xtime_value, bytes):
@@ -637,25 +701,72 @@ def load_frame(frame, vname, level=None, sum_vars=None, deaccumulate=False,
 # ---------------------------------------------------------------------------
 # Single-frame rendering (used by still image AND each animation frame)
 # ---------------------------------------------------------------------------
+def compute_auto_extent(ds, da=None, gridfile=None, margin_frac=0.05):
+    """Map extent ``[lon_min, lon_max, lat_min, lat_max]`` from the mesh footprint.
+
+    Restricted to the finite (non-NaN) cells of ``da`` when it is a cell field,
+    so a masked field (e.g. ``sst`` over the ocean) frames its valid region;
+    otherwise the whole mesh footprint is used. The mesh coordinates are taken
+    from ``ds`` when present, else from the ``gridfile`` (many files such as
+    ``sfc_update``/``diag`` carry the field but not ``latCell``/``lonCell``).
+    Returns ``None`` if no usable coordinates are found.
+    """
+    def _coords(d):
+        if 'latitude' in d and 'nCells' in d['latitude'].dims:
+            return d['latitude'].values, d['longitude'].values
+        if 'latitudeVertex' in d:
+            return d['latitudeVertex'].values, d['longitudeVertex'].values
+        return None
+
+    got = _coords(ds)
+    if got is None and gridfile is not None:
+        try:
+            g = open_mpas_file(gridfile)
+            got = _coords(g)
+            g.close()
+        except Exception:
+            got = None
+    if got is None:
+        return None
+    lat, lon = got
+
+    if da is not None and 'nCells' in da.dims and da.values.shape == lat.shape:
+        valid = np.isfinite(da.values)
+        if valid.any():
+            lat, lon = lat[valid], lon[valid]
+
+    lon_min, lon_max = float(np.min(lon)), float(np.max(lon))
+    lat_min, lat_max = float(np.min(lat)), float(np.max(lat))
+    m_lon = margin_frac * ((lon_max - lon_min) or 1.0)
+    m_lat = margin_frac * ((lat_max - lat_min) or 1.0)
+    return [max(lon_min - m_lon, -180.0), min(lon_max + m_lon, 180.0),
+            max(lat_min - m_lat, -90.0), min(lat_max + m_lat, 90.0)]
+
+
 def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
                      level=None, gridfile=None, mask_land=False,
                      plotEdge=True, show_coastlines=True, show_progress=True,
                      u_var=None, v_var=None, stride=15,
                      sum_vars=None, deaccumulate=False, prev_frame=None,
                      lat_min=None, lat_max=None, lon_min=None, lon_max=None,
-                     extend='both', add_cbar=True):
+                     auto_extent=False, extend='both', add_cbar=True):
     """Draw one timeline frame onto ``ax`` (cells/vertices, wind, title, cbar)."""
     ax.clear()
     add_cartopy_details(ax, zorder=2, show_coastlines=show_coastlines)
 
+    da, ds, vname = load_frame(frame, vname, level=level, sum_vars=sum_vars,
+                               deaccumulate=deaccumulate, prev_frame=prev_frame)
+
+    # Extent: explicit box wins; else auto-frame to the mesh/valid data; else global.
     if (lat_min is not None and lat_max is not None and
             lon_min is not None and lon_max is not None):
         ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+    elif auto_extent:
+        ext = compute_auto_extent(ds, da, gridfile=gridfile)
+        ax.set_extent(ext if ext else [-180.0, 180, -90.0, 90.0],
+                      crs=ccrs.PlateCarree())
     else:
         ax.set_extent([-180.0, 180, -90.0, 90.0], crs=ccrs.PlateCarree())
-
-    da, ds, vname = load_frame(frame, vname, level=level, sum_vars=sum_vars,
-                               deaccumulate=deaccumulate, prev_frame=prev_frame)
 
     if 'nCells' in da.dims:
         plot_cells_mpas(da, ds, ax, plotEdge, gridfile=gridfile,
@@ -678,7 +789,13 @@ def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
         if level is not None and 'nVertLevels' in u_frame.dims:
             u_frame = u_frame.isel(nVertLevels=level)
             v_frame = v_frame.isel(nVertLevels=level)
-        add_wind_vectors(ax, ds, u_frame, v_frame, stride=stride)
+        cell_lat, cell_lon = _resolve_cell_coords(ds, gridfile=gridfile)
+        if cell_lat is not None:
+            add_wind_vectors(ax, cell_lat, cell_lon, u_frame, v_frame,
+                             stride=stride)
+        else:
+            print("WARNING: lat/lon cell coordinates not found; "
+                  "wind vectors skipped. Supply -gf with a grid/static/init file.")
 
     title = f'{vname}'
     if level is not None and 'nVertLevels' in ds[vname].dims:
@@ -696,13 +813,13 @@ def render_one_frame(ax, frame, vname, plot_kwargs, *, fig=None,
 
 def _render_frame_to_png(args):
     """Worker: render one frame to a temporary PNG (for parallel animation)."""
-    (idx, frame, prev_frame, vname, plot_kwargs, kw, dpi) = args
+    (idx, frame, prev_frame, vname, plot_kwargs, kw, dpi, tmpdir) = args
 
     fig = plt.figure(figsize=(12, 8))
     ax = plt.axes(projection=ccrs.PlateCarree())
     render_one_frame(ax, frame, vname, plot_kwargs, fig=fig,
                      prev_frame=prev_frame, show_progress=False, **kw)
-    temp_file = f'_mpas_viz_frame_{idx:05d}.png'
+    temp_file = os.path.join(tmpdir, f'_mpas_viz_frame_{idx:05d}.png')
     fig.savefig(temp_file, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
     return temp_file
@@ -712,37 +829,68 @@ def _render_frame_to_png(args):
 # Output writers
 # ---------------------------------------------------------------------------
 def _stitch_pngs(temp_files, outfile, fps):
-    """Combine rendered PNG frames into a .gif or .mp4 and clean up temps."""
-    if outfile.endswith('.gif'):
-        from PIL import Image
-        # Load each frame inside a context manager and keep an in-memory copy,
-        # so the file descriptors are released promptly (many frames would
-        # otherwise exhaust the OS file-descriptor limit).
-        images = []
-        for f in temp_files:
-            with Image.open(f) as im:
-                images.append(im.copy())
-        images[0].save(outfile, save_all=True, append_images=images[1:],
-                       duration=int(1000 / fps), loop=0, optimize=False)
-    else:
-        try:
-            import imageio
-            with imageio.get_writer(outfile, fps=fps) as writer:
-                for f in tqdm(temp_files, desc="  Writing video"):
-                    writer.append_data(imageio.imread(f))
-        except ImportError:
-            import subprocess
-            listfile = '_mpas_viz_filelist.txt'
+    """Combine rendered PNG frames into a .gif or .mp4; always remove the frames.
+
+    For video, FFmpeg is required. Its availability is checked explicitly (CLI
+    binary, then the ``imageio-ffmpeg`` plugin) rather than relying on
+    ``imageio`` to raise ``ImportError`` on a missing backend — it doesn't:
+    without a working video plugin it silently resolves to an unrelated one
+    (e.g. the always-available tifffile plugin), which then crashes deep inside
+    with a confusing error instead of naming the real problem.
+    """
+    try:
+        if outfile.endswith('.gif'):
+            from PIL import Image
+            # Load each frame inside a context manager and keep an in-memory
+            # copy, so file descriptors are released promptly (many frames would
+            # otherwise exhaust the OS file-descriptor limit).
+            images = []
+            for f in temp_files:
+                with Image.open(f) as im:
+                    images.append(im.copy())
+            images[0].save(outfile, save_all=True, append_images=images[1:],
+                           duration=int(1000 / fps), loop=0, optimize=False)
+            return
+
+        ffmpeg_bin = shutil.which('ffmpeg')
+        if ffmpeg_bin is not None:
+            listfile = outfile + '.filelist.txt'
             with open(listfile, 'w') as f:
                 for img in temp_files:
-                    f.write(f"file '{img}'\nduration {1.0 / fps}\n")
-            subprocess.run(['ffmpeg', '-f', 'concat', '-safe', '0', '-i',
-                            listfile, '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-                            outfile, '-y'], check=True)
+                    f.write(f"file '{os.path.abspath(img)}'\n"
+                            f"duration {1.0 / fps}\n")
+            result = subprocess.run(
+                [ffmpeg_bin, '-f', 'concat', '-safe', '0', '-i', listfile,
+                 # libx264 requires even width/height; matplotlib's
+                 # bbox_inches='tight' crop rarely lands on an even pixel
+                 # count, so force it here rather than fail mid-encode.
+                 '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                 '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outfile, '-y'])
             os.remove(listfile)
+            if result.returncode != 0:
+                raise SystemExit(
+                    f"\nERROR: ffmpeg exited with status {result.returncode} "
+                    f"while writing {outfile} (see the ffmpeg output above).")
+            return
 
-    for f in temp_files:
-        os.remove(f)
+        try:
+            import imageio_ffmpeg  # noqa: F401 -- presence check for imageio's video backend
+        except ImportError:
+            raise SystemExit(
+                "\nERROR: writing a video (.mp4/…) needs FFmpeg, which was not "
+                "found on this system:\n"
+                "         conda install -c conda-forge ffmpeg\n"
+                "       …or the Python-only plugin:\n"
+                "         pip install imageio-ffmpeg\n"
+                "       …or output a .gif instead (no FFmpeg needed).")
+        import imageio
+        with imageio.get_writer(outfile, fps=fps, format='FFMPEG') as writer:
+            for f in tqdm(temp_files, desc="  Writing video"):
+                writer.append_data(imageio.imread(f))
+    finally:
+        for f in temp_files:
+            if os.path.exists(f):
+                os.remove(f)
 
 
 # ---------------------------------------------------------------------------
@@ -751,8 +899,9 @@ def _stitch_pngs(temp_files, outfile, fps):
 def run(file_pattern, vname=None, outfile=None,
         level=None, tstart=None, tend=None, list_times=False,
         gridfile=None, plotEdge=True, mask_land=False, clip=False,
-        cmap='Spectral', vmin=None, vmax=None, extend='both',
+        cmap='Spectral_r', vmin=None, vmax=None, extend='both',
         lat_min=None, lat_max=None, lon_min=None, lon_max=None,
+        auto_extent=False,
         show_coastlines=True, u_var=None, v_var=None, stride=15,
         sum_vars=None, deaccumulate=False,
         fps=5, dpi=150, n_jobs=1):
@@ -778,6 +927,9 @@ def run(file_pattern, vname=None, outfile=None,
     # 4. Select the timeline sub-range (inclusive on both ends). Indices are
     #    clamped to the valid range so legacy '--tmax N' (which used to be an
     #    exclusive slice bound and could equal/exceed the count) still works.
+    #    tstart/tend may be datetime strings — resolve them to integer indices.
+    tstart = _resolve_time_index(tstart, timeline)
+    tend   = _resolve_time_index(tend,   timeline)
     last = len(timeline) - 1
     lo = 0 if tstart is None else max(0, tstart)
     hi = last if tend is None else min(last, tend)
@@ -807,7 +959,8 @@ def run(file_pattern, vname=None, outfile=None,
                     u_var=u_var, v_var=v_var, stride=stride,
                     sum_vars=sum_vars, deaccumulate=deaccumulate,
                     lat_min=lat_min, lat_max=lat_max,
-                    lon_min=lon_min, lon_max=lon_max, extend=extend)
+                    lon_min=lon_min, lon_max=lon_max,
+                    auto_extent=auto_extent, extend=extend)
 
     # 6. Single frame -> still image.
     if len(selected) == 1:
@@ -834,25 +987,32 @@ def run(file_pattern, vname=None, outfile=None,
 
     prev_frames = [None] + selected[:-1] if deaccumulate else [None] * len(selected)
 
-    if n_jobs and n_jobs != 1:
-        if n_jobs == -1:
-            n_jobs = cpu_count()
-        print(f"  Rendering frames in parallel with {n_jobs} workers...")
-        args_list = [(i, selected[i], prev_frames[i], vname, plot_kwargs,
-                      frame_kw, dpi) for i in range(len(selected))]
-        with Pool(processes=n_jobs) as pool:
-            temp_files = list(tqdm(pool.imap(_render_frame_to_png, args_list),
-                                   total=len(selected), desc="  Frames"))
-    else:
-        print("  Rendering frames sequentially (use -j >1 for speedup)...")
-        temp_files = []
-        for i, frame in enumerate(tqdm(selected, desc="  Frames")):
-            temp_files.append(_render_frame_to_png(
-                (i, frame, prev_frames[i], vname, plot_kwargs, frame_kw, dpi)))
+    # Frames go in a scratch tempdir (not the current directory) and are always
+    # cleaned up, even if rendering or video writing raises partway through.
+    tmpdir = tempfile.mkdtemp(prefix='mpas_viz_frames_')
+    try:
+        if n_jobs and n_jobs != 1:
+            if n_jobs == -1:
+                n_jobs = cpu_count()
+            print(f"  Rendering frames in parallel with {n_jobs} workers...")
+            args_list = [(i, selected[i], prev_frames[i], vname, plot_kwargs,
+                          frame_kw, dpi, tmpdir) for i in range(len(selected))]
+            with Pool(processes=n_jobs) as pool:
+                temp_files = list(tqdm(pool.imap(_render_frame_to_png, args_list),
+                                       total=len(selected), desc="  Frames"))
+        else:
+            print("  Rendering frames sequentially (use -j >1 for speedup)...")
+            temp_files = []
+            for i, frame in enumerate(tqdm(selected, desc="  Frames")):
+                temp_files.append(_render_frame_to_png(
+                    (i, frame, prev_frames[i], vname, plot_kwargs, frame_kw,
+                     dpi, tmpdir)))
 
-    print("  Combining frames...")
-    _stitch_pngs(temp_files, outfile, fps)
-    print(f"Saved: {os.path.abspath(outfile)}")
+        print("  Combining frames...")
+        _stitch_pngs(temp_files, outfile, fps)
+        print(f"Saved: {os.path.abspath(outfile)}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -889,11 +1049,15 @@ def build_parser():
                         help="Vertical level (for 3D fields)")
 
     # Time selection
-    parser.add_argument("--tstart", "--tmin", dest="tstart", type=int,
-                        default=None, help="First timeline index (inclusive)")
-    parser.add_argument("--tend", "--tmax", dest="tend", type=int, default=None,
-                        help="Last timeline index (inclusive)")
-    parser.add_argument("-t", "--time", dest="time", type=int, default=None,
+    parser.add_argument("--tstart", "--tmin", dest="tstart", type=_time_arg,
+                        default=None,
+                        help="First timeline index (int) or datetime string "
+                             "(e.g. '2021-11-01_00:00:00'), inclusive")
+    parser.add_argument("--tend", "--tmax", dest="tend", type=_time_arg,
+                        default=None,
+                        help="Last timeline index (int) or datetime string, "
+                             "inclusive")
+    parser.add_argument("-t", "--time", dest="time", type=_time_arg, default=None,
                         help="Single timeline index (shortcut for one still "
                              "image)")
     parser.add_argument("--list-times", action='store_true',
@@ -912,8 +1076,8 @@ def build_parser():
     # Color
     parser.add_argument("-c", "--clip", type=str, default='no',
                         help="Clip extremes at mean +/- 4*std: yes or no")
-    parser.add_argument("--cmap", type=str, default='Spectral',
-                        help="Colormap (default: Spectral)")
+    parser.add_argument("--cmap", type=str, default='Spectral_r',
+                        help="Colormap (default: Spectral_r — red = higher)")
     parser.add_argument("--vmin", type=float, default=None,
                         help="Minimum value for the color scale")
     parser.add_argument("--vmax", type=float, default=None,
@@ -926,6 +1090,10 @@ def build_parser():
     parser.add_argument("-lat_max", type=float, default=None)
     parser.add_argument("-lon_min", type=float, default=None)
     parser.add_argument("-lon_max", type=float, default=None)
+    parser.add_argument("--auto-extent", action='store_true',
+                        help="Auto-frame the map to the mesh footprint (or the "
+                             "non-NaN region of the field), instead of global. "
+                             "Explicit -lat_min/-lon_min/... still take priority.")
     parser.add_argument("--no-coastlines", action='store_true',
                         help="Hide coastlines")
 
@@ -985,6 +1153,7 @@ def main(argv=None):
         extend=args.extend,
         lat_min=args.lat_min, lat_max=args.lat_max,
         lon_min=args.lon_min, lon_max=args.lon_max,
+        auto_extent=args.auto_extent,
         show_coastlines=not args.no_coastlines,
         u_var=args.u_wind, v_var=args.v_wind, stride=args.stride,
         sum_vars=args.sum_vars, deaccumulate=args.deaccumulate,
