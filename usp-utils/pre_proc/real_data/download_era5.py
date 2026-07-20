@@ -9,7 +9,7 @@ Downloads two GRIB files via the CDS API (cdsapi):
   - single levels   (reanalysis-era5-single-levels):   sp, msl, skt, z (orog),
                      lsm, siconc, sd (snow), stl1-4 (soil T), swvl1-4 (soil moist)
 They are then turned into the WPS intermediate format by era5_to_intermediate.py
-(consumed by init_atmosphere with config_met_prefix='GFS', same as the GFS path).
+(consumed by init_atmosphere with config_met_prefix='ERA5', matching the ERA5: prefix).
 
 Requirements (in the cgfd-usp-mpas env):
   - cdsapi (pip)
