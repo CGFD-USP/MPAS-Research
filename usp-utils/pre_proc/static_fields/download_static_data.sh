@@ -178,8 +178,7 @@ if [ "$MESH" != "none" ]; then
                 echo -e "${OK} ${MESH}.grid.nc already extracted"
             else
                 echo -e "${INFO} Extracting ${MESH}.tar.gz"
-                tar xzf "$mesh_tar" -C "$MESH_DIR" && echo -e "${OK} extracted ${MESH} (grid.nc + graph.info[.part.N])"
-            fi
+                tar xzf "$mesh_tar" -C "$MESH_DIR" && echo -e "${OK} extracted ${MESH} (grid.nc + graph.info[.part.N])" || { echo -e "${ERR} Failed to extract ${MESH}.tar.gz"; failures=$((failures+1)); }
         fi
         record_sha "$MESH_DIR" "${MESH}.tar.gz"
     else
