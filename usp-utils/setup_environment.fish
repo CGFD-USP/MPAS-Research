@@ -9,7 +9,7 @@ set INFO "$CYAN""[INFO]""$NC"
 set WARNING "$YELLOW""[WARNING]""$NC"
 
 set -x MPAS_ROOT (dirname (realpath "$SCRIPT_DIR../"))
-echo -e "$INFO New enviroment variable set: MPAS_ROOT=$MPAS_ROOT"
+echo -e "$INFO New environment variable set: MPAS_ROOT=$MPAS_ROOT"
 
 if [ ! -d "$MPAS_ROOT/runs" ]
     mkdir "$MPAS_ROOT/runs"
@@ -27,7 +27,7 @@ if [ ! -d "$MPAS_ROOT/met_data" ]
 end
 
 set -x PYTHONPATH "$SCRIPT_DIR/libs/py:$PYTHONPATH"
-echo -e "$INFO New enviroment variable set: PYTHONPATH=$PYTHONPATH"
+echo -e "$INFO New environment variable set: PYTHONPATH=$PYTHONPATH"
 
 conda &> /dev/null
 if [ ! $status ]
@@ -37,9 +37,14 @@ end
 
 set N (conda info --envs | grep '^cgfd-usp-mpas ' | wc -l)
 if [ $N = 0 ]
-    echo -e "$WARNING Couldn't find the 'cgfd-usp-mpas' conda environment. It will not be activated and Python scripts might not work. If you wish to install the conda environment please run the script in $SCRIPT_DIR/install_conda_environment.sh"
+    echo -e "$WARNING Couldn't find the 'cgfd-usp-mpas' conda environment. It will not be activated and Python scripts might not work. If you wish to install the conda environment please run the script in $SCRIPT_DIR/install/install_conda_environment.sh"
     return 1
 end
 
 conda activate cgfd-usp-mpas
-echo -e "$INFO Conda enviroment 'cgfd-usp-mpas' activated"
+if [ "$CONDA_DEFAULT_ENV" = cgfd-usp-mpas ]
+    echo -e "$INFO Conda environment 'cgfd-usp-mpas' activated"
+else
+    echo -e "$WARNING Found the 'cgfd-usp-mpas' environment but 'conda activate' did not take effect (is conda initialised in this shell?). Python scripts might not work."
+    return 1
+end
