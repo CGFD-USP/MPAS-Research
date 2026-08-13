@@ -3,6 +3,8 @@ channels:
   - conda-forge
 dependencies:
   - cartopy
+  - cfgrib
+  - eccodes
   - f90nml
   - jigsaw
   - matplotlib
@@ -15,4 +17,6 @@ dependencies:
   - tqdm
   - xarray
   - pip:
+    - cdsapi
     - git+https://github.com/dengwirda/jigsaw-python.git
+    - pywinter
