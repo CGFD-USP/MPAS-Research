@@ -317,7 +317,9 @@ def _cleanup_intermediate(out_basepath, out_dir):
 
 def build_global_mesh(opt, out_basepath, out_dir, out_filename,
                       r=30, l=150, rad=50, tr=600,
-                      clon=0.0, clat=0.0, plots=False):
+                      clon=0.0, clat=0.0, plots=False,
+                      buffer_spec=None, dist_fn=None,
+                      hfun_dlat=None, hfun_dtype=None):
     """
     Build a global MPAS mesh and write it to MPAS NetCDF format.
 
@@ -350,6 +352,16 @@ def build_global_mesh(opt, out_basepath, out_dir, out_filename,
         Centre of the refinement, in degrees ("localref" only).
     plots : bool
         If True, show diagnostic plots of the resolution field.
+    buffer_spec : cellwidth_util.BufferSpec, optional
+        If given (with ``dist_fn``), build a regional field with a buffer /
+        transition zone instead of the classic locally-refined one. Ignored
+        unless ``opt == "localref"``.
+    dist_fn : callable, optional
+        Signed distance to the region boundary; see bufferedRegionVsLatLon.
+    hfun_dlat : float, optional
+        Working-grid spacing in degrees for the buffered field.
+    hfun_dtype : numpy dtype, optional
+        Storage type for the buffered field (float32 halves memory).
 
     Returns
     -------
@@ -359,6 +371,12 @@ def build_global_mesh(opt, out_basepath, out_dir, out_filename,
     if opt in ("unif", "localref"):
         if opt == "unif":
             cellWidth, lon, lat = cellWidthVsLatLon(r)
+        elif buffer_spec is not None:  # localref with a buffer/transition zone
+            if dist_fn is None:
+                raise ValueError("buffer_spec requires dist_fn")
+            cellWidth, lon, lat = bufferedRegionVsLatLon(
+                buffer_spec, dist_fn, clon=clon, clat=clat,
+                dlat=hfun_dlat, dtype=hfun_dtype, p=plots)
         else:  # localref
             cellWidth, lon, lat = localrefVsLatLon(
                 r, l=l, radius_high=rad, transition_radius=tr,
@@ -413,7 +431,10 @@ def resolve_plot_path(plot_out, out_dir, out_base):
     return plot_out
 
 
-def plot_resolution(grid_file, out_png, states=False):
+def plot_resolution(grid_file, out_png, states=False, center=None,
+                    spec=None, core_radius=None, rings=None, show_bdy=True,
+                    profile=None, vmin=None, vmax=None,
+                    boundaries=None, dist_fn=None):
     """
     Quick-look plot of the cell resolution (km) of any MPAS mesh.
 
@@ -434,6 +455,36 @@ def plot_resolution(grid_file, out_png, states=False):
         Output image path.
     states : bool
         Also draw state/province borders (recommended for regional meshes).
+    center : (float, float), optional
+        (clat, clon) of the region. Enables the radial-profile panel, which is
+        the plot that actually shows whether jigsaw honoured the requested
+        transition.
+    spec : cellwidth_util.BufferSpec, optional
+        If given, the analytic profile is drawn over the measured one and the
+        colour scale is pinned to the requested spacings, so the flat zones
+        read as flat instead of being stretched by autoscaling.
+    core_radius : float, optional
+        Radius (km) of the area of interest, for the profile markers.
+    rings : list of (radius_km, label, colour), optional
+        Extra circles to draw on the map and mark on the profile.
+    boundaries : list of (points, label, colour), optional
+        Real region outlines to draw on the map, ``points`` being a list of
+        ``(lat, lon)``. Preferred over ``rings`` for anything that is not a
+        circle.
+    dist_fn : callable, optional
+        ``dist_fn(lons, lats)`` giving the signed distance to the region
+        boundary. When given, the profile panel is plotted against that instead
+        of against distance from the centre, which is the only sensible x-axis
+        for a non-circular domain.
+    show_bdy : bool
+        Outline the relaxation-zone cells (``bdyMaskCell > 0``). Seeing all
+        seven rings sit inside the flat outer band is the verification that the
+        buffer is doing its job.
+    profile : bool, optional
+        Force the profile panel on or off; defaults to on when ``center`` is
+        given.
+    vmin, vmax : float, optional
+        Colour-scale limits in km.
     """
     from netCDF4 import Dataset
 
@@ -444,12 +495,26 @@ def plot_resolution(grid_file, out_png, states=False):
 
     # Approx. resolution from cell area. Meshes here live on a unit sphere
     # (sphere_radius=1), so scale areas up to the real Earth before converting.
+    #
+    # An MPAS cell is a hexagon of spacing h (centre-to-centre distance), whose
+    # area is A = (sqrt(3)/2) h^2, so h = sqrt(2A/sqrt(3)). Using the diameter
+    # of an equal-area disc instead, 2*sqrt(A/pi), overstates the spacing by
+    # 5.0 % -- it used to make a nominally 5 km mesh plot as 5.24 km.
     area = ds.variables['areaCell'][:]
     sphere_radius = float(getattr(ds, 'sphere_radius', 1.0))
     earth_radius_m = 6371220.0 if sphere_radius == 1.0 else 1.0
     area_km2 = (area / 1.0e6) * earth_radius_m ** 2
-    resolution_km = 2.0 * np.sqrt(area_km2 / np.pi)
+    resolution_km = np.sqrt(2.0 * area_km2 / np.sqrt(3.0))
+    bdy_mask = (ds.variables['bdyMaskCell'][:]
+                if 'bdyMaskCell' in ds.variables else None)
     ds.close()
+
+    if profile is None:
+        profile = center is not None
+    if vmin is None and spec is not None:
+        vmin = spec.r
+    if vmax is None and spec is not None:
+        vmax = spec.r_outer * 1.05
 
     try:
         import cartopy.crs as ccrs
@@ -457,11 +522,26 @@ def plot_resolution(grid_file, out_png, states=False):
     except ImportError:
         ccrs = None
 
+    cmap = resolution_cmap()
+    if vmin is not None and vmax is not None:
+        norm, _ = resolution_norm(vmin, vmax)
+        skw = {'cmap': cmap, 'norm': norm}
+        cbkw = {'extend': 'max'}
+    else:
+        norm, _ = resolution_norm(float(resolution_km.min()),
+                                  float(resolution_km.max()))
+        skw = {'cmap': cmap, 'norm': norm}
+        cbkw = {}
+
+    # Map and profile go to separate files: they are read for different
+    # reasons, and a two-panel figure makes each half too small to use in a
+    # report or a slide.
+    fig = plt.figure(figsize=(8, 7))
+
     if ccrs is not None:
         proj = ccrs.PlateCarree()
-        fig, ax = plt.subplots(figsize=(8, 7), subplot_kw={'projection': proj})
-        sc = ax.scatter(lon, lat, c=resolution_km, s=4, cmap="viridis",
-                        transform=proj)
+        ax = fig.add_subplot(1, 1, 1, projection=proj)
+        sc = ax.scatter(lon, lat, c=resolution_km, s=4, transform=proj, **skw)
 
         # Frame the data: whole globe if it spans (almost) everything,
         # otherwise zoom to the mesh with a small margin.
@@ -493,17 +573,328 @@ def plot_resolution(grid_file, out_png, states=False):
     else:
         print("WARNING: cartopy not available; plotting a plain scatter "
               "(no coastlines/borders).")
-        fig, ax = plt.subplots(figsize=(8, 7))
-        sc = ax.scatter(lon, lat, c=resolution_km, s=4, cmap="viridis")
+        ax = fig.add_subplot(1, 1, 1)
+        sc = ax.scatter(lon, lat, c=resolution_km, s=4, **skw)
         ax.set_xlabel("longitude")
         ax.set_ylabel("latitude")
         ax.set_aspect("equal")
 
-    cb = fig.colorbar(sc, ax=ax, shrink=0.8)
+    if boundaries:
+        kwb = {'transform': ccrs.PlateCarree()} if ccrs is not None else {}
+        for points, lab, col in boundaries:
+            blat = np.array([q[0] for q in points])
+            blon = np.array([q[1] for q in points])
+            blat = np.append(blat, blat[0])
+            blon = np.append(blon, blon[0])
+            ax.plot(blon, blat, lw=1.0, color=col, label=lab, **kwb)
+
+    if show_bdy and bdy_mask is not None and (bdy_mask > 0).any():
+        rel = bdy_mask > 0
+        kw = {'transform': ccrs.PlateCarree()} if ccrs is not None else {}
+        # Black outline, not a colour: the resolution palette runs from purple
+        # through red to green, so any hue would vanish somewhere on the map.
+        ax.scatter(lon[rel], lat[rel], s=6, facecolors='none',
+                   edgecolors='black', linewidths=0.3,
+                   label='relaxation zone', **kw)
+        ax.legend(loc='lower left', fontsize=7, framealpha=0.8)
+
+    cb = fig.colorbar(sc, ax=ax, shrink=0.8, **cbkw)
     cb.set_label("cell resolution (km)")
     ax.set_title(os.path.basename(grid_file))
+
     fig.tight_layout()
     fig.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
-    return out_png
+    profile_png = None
+    if profile:
+        profile_png = profile_plot_path(out_png)
+        figp, axp = plt.subplots(figsize=(7.5, 5.5))
+        clat, clon = center
+
+        # Distance from the centre only means something for a circle. For any
+        # other shape the meaningful coordinate is the signed distance to the
+        # region boundary, which is also exactly what the profile was designed
+        # against, so the analytic curve overlays it directly.
+        if dist_fn is not None:
+            d = dist_fn(lon, lat)
+            r0 = 0.0
+            xlabel = "signed distance to the area of interest (km)"
+        else:
+            d = latlon_to_distance_center(lon, lat, clon=clon, clat=clat)
+            r0 = core_radius if core_radius is not None else 0.0
+            xlabel = "great-circle distance from region centre (km)"
+
+        axp.scatter(d, resolution_km, s=2, alpha=0.25, color='C0',
+                    label='mesh cells')
+        if bdy_mask is not None and (bdy_mask > 0).any():
+            rel = bdy_mask > 0
+            axp.scatter(d[rel], resolution_km[rel], s=3, alpha=0.6,
+                        color='crimson', label='relaxation zone')
+        if spec is not None:
+            import cellwidth_util as cwu
+            dd = np.linspace(float(d.min()), float(d.max()) * 1.02, 1500)
+            axp.plot(dd, cwu.buffered_cellwidth(dd - r0, spec), lw=1.8,
+                     color='k', label='requested profile')
+            marks = [(r0, 'area of interest', 'k'),
+                     (r0 + spec.width, 'end of ramp', 'C1'),
+                     (r0 + spec.cut_offset, 'LBC zone starts (.pts)', 'C3'),
+                     (r0 + spec.mesh_offset, 'mesh edge', 'C2')]
+            for x, lab, col in marks:
+                axp.axvline(x, ls='--', lw=1, color=col)
+                axp.text(x, axp.get_ylim()[1], ' ' + lab, rotation=90,
+                         va='top', ha='left', fontsize=7, color=col)
+        for ring in (rings or []):
+            axp.axvline(ring[0], ls=':', lw=1,
+                        color=ring[2] if len(ring) > 2 else 'gray')
+        axp.set_xlabel(xlabel)
+        axp.set_ylabel("cell resolution (km)")
+        axp.set_title("%s - resolution profile" % os.path.basename(grid_file))
+        axp.grid(alpha=0.3)
+        axp.legend(fontsize=8, loc='upper left')
+
+        figp.tight_layout()
+        figp.savefig(profile_png, dpi=150, bbox_inches="tight")
+        plt.close(figp)
+
+    return out_png, profile_png
+
+
+# Colour scale for grid spacing, given coarse -> fine. Matplotlib maps position
+# 0 of a colormap to the LOWEST value, and the lowest spacing is the finest, so
+# the list is reversed when the colormap is built: fine cells come out purple,
+# coarse cells green.
+RESOLUTION_COLORS_COARSE_TO_FINE = [
+    "#008000", "#33B200", "#80D900", "#CCE600", "#FFE600", "#FFB200",
+    "#FF8000", "#FF4000", "#FF0000", "#CC0033", "#99004C", "#660066",
+]
+
+
+def resolution_cmap():
+    """Discrete colormap for cell spacing (fine = purple, coarse = green)."""
+    from matplotlib.colors import ListedColormap
+
+    colors = list(reversed(RESOLUTION_COLORS_COARSE_TO_FINE))
+    cmap = ListedColormap(colors, name="mpas_resolution")
+    # Anything coarser than the top of the scale keeps the coarsest colour,
+    # so the discarded background does not read as a separate category.
+    cmap.set_over(colors[-1])
+    cmap.set_under(colors[0])
+    return cmap
+
+
+def resolution_norm(vmin, vmax):
+    """BoundaryNorm with one bin per colour of resolution_cmap()."""
+    from matplotlib.colors import BoundaryNorm
+
+    cmap = resolution_cmap()
+    levels = np.linspace(float(vmin), float(vmax), cmap.N + 1)
+    return BoundaryNorm(levels, cmap.N), levels
+
+
+def profile_plot_path(out_png):
+    """Companion path for the separate resolution-profile figure."""
+    base, ext = os.path.splitext(out_png)
+    return base + "_profile" + (ext or ".png")
+
+
+def latlon_grid(dlat, dlon=None):
+    """
+    Regular global lat/lon grid used as jigsaw's HFUN (target size) grid.
+
+    Returns (lon, lat) in degrees, lon in [-180, 180] and lat in [-90, 90].
+    Note the wrap column is duplicated (lon[0] == lon[-1] - 360), which is what
+    jigsaw expects for a periodic grid.
+    """
+    dlon = dlat if dlon is None else dlon
+    nlat = int(180. / dlat) + 1
+    nlon = int(360. / dlon) + 1
+    return np.linspace(-180., 180., nlon), np.linspace(-90., 90., nlat)
+
+
+def bufferedRegionVsLatLon(spec, dist_fn, clon=0.0, clat=0.0, dlat=None,
+                           dtype=None, chunk_rows=512, p=False):
+    """
+    Cell width array for a regional mesh with a buffer / transition zone.
+
+    Unlike localrefVsLatLon, which is a function of distance from a point, this
+    is a function of the signed distance to the *boundary of the area of
+    interest*, so it follows the actual region shape -- a box gets a buffer of
+    even width all the way round, including at its corners.
+
+    Parameters
+    ----------
+    spec : cellwidth_util.BufferSpec
+        The resolved profile (spacings, ramp width, plateau, background).
+    dist_fn : callable
+        ``dist_fn(lons, lats, pad_km=None)`` returning the signed great-circle
+        distance in km to the region boundary, negative inside. Build one with
+        regional_util.circle_distance_fn or regional_util.polygon_distance_fn.
+    clon, clat : float
+        Region centre, used only for the diagnostic plot.
+    dlat : float, optional
+        Spacing of the working grid in degrees. Defaults to ``spec.r / 200``,
+        matching localrefVsLatLon. The field only has to resolve the
+        *transition*, not the cell size, so a coarser grid is usually fine and
+        much cheaper: at r = 5 km the default is 7201 x 14401 points.
+    dtype : numpy dtype, optional
+        float32 halves memory and shrinks the intermediate jigsaw HFUN file;
+        defaults to float64.
+    chunk_rows : int
+        Number of latitude rows evaluated at a time, so peak memory stays
+        bounded no matter how fine the grid is.
+    p : bool
+        Show a diagnostic plot of the resolution field.
+
+    Returns
+    -------
+    cellWidth : ndarray
+        m x n array of cell width in km.
+    lon, lat : ndarray
+        Grid coordinates in degrees.
+    """
+    import cellwidth_util as cwu
+
+    if dlat is None:
+        dlat = spec.r / 200.
+    if dtype is None:
+        dtype = np.float64
+
+    lon, lat = latlon_grid(dlat)
+    cellWidth = np.empty((lat.size, lon.size), dtype=dtype)
+
+    # Past this distance the profile has flattened out at the background
+    # spacing, so dist_fn may take whatever shortcut it likes.
+    pad_km = spec.total_offset + (spec.l - spec.r_outer) / spec.outer_slope
+
+    print("Building buffered resolution field on a %d x %d grid (dlat=%.4g deg)"
+          % (lat.size, lon.size, dlat))
+    print("  core %.1f km -> ramp %.1f km -> plateau %.1f km -> background %.1f km"
+          % (spec.r, spec.width, spec.r_outer, spec.l))
+
+    scratch = None
+    for i0 in range(0, lat.size, chunk_rows):
+        i1 = min(i0 + chunk_rows, lat.size)
+        s = dist_fn(lon[None, :], lat[i0:i1, None], pad_km=pad_km)
+        if scratch is None or scratch.shape != s.shape:
+            scratch = np.empty(s.shape, dtype=float)
+        cellWidth[i0:i1] = cwu.buffered_cellwidth(s, spec, out=scratch)
+
+    print("  resolution field: min %.2f km, max %.2f km"
+          % (cellWidth.min(), cellWidth.max()))
+
+    if p:
+        plot_cellwidth_field(cellWidth, lon, lat, None, clon=clon, clat=clat,
+                             spec=spec, show=True)
+
+    return cellWidth, lon, lat
+
+
+def plot_cellwidth_field(cellWidth, lon, lat, out_png, clon=0.0, clat=0.0,
+                         spec=None, core_radius=None, extent_km=None,
+                         title=None, show=False, boundaries=None):
+    """
+    Plot the ANALYTIC cell-width field, before jigsaw is ever run.
+
+    This is what --preview draws: it takes seconds, whereas generating a 5 km
+    mesh takes minutes, so it is the right place to tune the ramp width.
+
+    Left panel: the field around the region. Right panel: its radial profile,
+    with the core / ramp / plateau boundaries marked.
+
+    ``boundaries`` is a list of ``(points, label, colour)``, where ``points`` is
+    a list of ``(lat, lon)``. Pass the real region outlines here: drawing
+    circles at a circumscribed radius would misrepresent every non-circular
+    domain, since the buffer follows the actual boundary, not a circle.
+    """
+    # Zoom to the regional domain: the field is global, but the part that gets
+    # cut out is small and it is the only part worth looking at.
+    if extent_km is None and spec is not None:
+        extent_km = 1.25 * ((core_radius or 0.0) + spec.mesh_offset)
+    if extent_km is None:
+        extent_km = 3000.0
+    half_deg = np.degrees(extent_km / 6371.0)
+
+    jlo = np.searchsorted(lon, clon - half_deg / max(0.1, np.cos(np.radians(clat))))
+    jhi = np.searchsorted(lon, clon + half_deg / max(0.1, np.cos(np.radians(clat))))
+    ilo = np.searchsorted(lat, clat - half_deg)
+    ihi = np.searchsorted(lat, clat + half_deg)
+    jlo, ilo = max(0, jlo), max(0, ilo)
+    jhi, ihi = min(lon.size, jhi + 1), min(lat.size, ihi + 1)
+
+    # Keep the pcolormesh under a few hundred thousand quads.
+    stride = max(1, int(np.sqrt((ihi - ilo) * (jhi - jlo) / 250000.)))
+    sub = cellWidth[ilo:ihi:stride, jlo:jhi:stride]
+    slon = lon[jlo:jhi:stride]
+    slat = lat[ilo:ihi:stride]
+
+    fig, ax = plt.subplots(figsize=(8, 7))
+
+    # Pin the colour scale to the transition itself. Autoscaling would stretch
+    # it over the 200 km background and render the whole regional domain as one
+    # flat blob -- exactly the detail we are here to inspect.
+    cmap = resolution_cmap()
+    if spec is not None:
+        norm, _ = resolution_norm(spec.r, spec.r_outer)
+        extend = "max"
+    else:
+        norm, _ = resolution_norm(float(sub.min()), float(sub.max()))
+        extend = "neither"
+    pc = ax.pcolormesh(slon, slat, sub, cmap=cmap, norm=norm,
+                       shading="nearest")
+    if boundaries:
+        for points, lab, col in boundaries:
+            blat = np.array([q[0] for q in points])
+            blon = np.array([q[1] for q in points])
+            blat = np.append(blat, blat[0])
+            blon = np.append(blon, blon[0])
+            ax.plot(blon, blat, lw=1.0, color=col, label=lab)
+        ax.legend(loc="upper right", fontsize=7, framealpha=0.85)
+
+    ax.set_aspect(1.0 / max(0.1, np.cos(np.radians(clat))))
+    ax.set_xlabel("longitude")
+    ax.set_ylabel("latitude")
+    ax.set_title(title or "target cell width (km)")
+    fig.colorbar(pc, ax=ax, shrink=0.85,
+                 extend=extend).set_label("cell width (km)")
+
+    fig.tight_layout()
+    if out_png:
+        fig.savefig(out_png, dpi=150, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+    # The profile goes to its own file rather than a cramped second panel.
+    profile_png = None
+    if spec is not None:
+        import cellwidth_util as cwu
+        profile_png = profile_plot_path(out_png) if out_png else None
+        figp, axp = plt.subplots(figsize=(7.5, 5.5))
+        s = np.linspace(-(core_radius or spec.total_offset),
+                        spec.total_offset * 1.35, 2000)
+        axp.plot(s, cwu.buffered_cellwidth(s, spec), lw=2, color="C0")
+        for off, lab, col in ((0.0, "area of interest", "k"),
+                              (spec.width, "end of ramp", "C1"),
+                              (spec.cut_offset, "LBC zone starts (.pts)", "C3"),
+                              (spec.mesh_offset, "mesh edge", "C2")):
+            axp.axvline(off, ls="--", lw=1, color=col)
+            axp.text(off, spec.l * 0.02 + spec.r_outer * 1.05, " " + lab,
+                     rotation=90, va="bottom", fontsize=8, color=col)
+        axp.axhline(spec.r, ls=":", lw=0.8, color="gray")
+        axp.axhline(spec.r_outer, ls=":", lw=0.8, color="gray")
+        axp.set_ylim(0, spec.r_outer * 2.0)
+        axp.set_xlabel("signed distance to the area of interest (km)")
+        axp.set_ylabel("cell width (km)")
+        axp.set_title("requested profile (%s, growth %.3f)"
+                      % (spec.profile, spec.growth))
+        axp.grid(alpha=0.3)
+
+        figp.tight_layout()
+        if profile_png:
+            figp.savefig(profile_png, dpi=150, bbox_inches="tight")
+        if show:
+            plt.show()
+        plt.close(figp)
+
+    return out_png, profile_png
