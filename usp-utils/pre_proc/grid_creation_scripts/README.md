@@ -23,6 +23,27 @@ The `-p/--plot` option additionally uses `matplotlib` and `cartopy` (both in the
 env) to draw coastlines and borders; if cartopy or its map data is unavailable
 the plot falls back to a plain scatter.
 
+Cell spacing is drawn on a fixed 12-step scale running **purple (finest) →
+red → orange → yellow → green (coarsest)**, so the same colour means the same
+spacing across every figure and two grids can be compared side by side. Values
+coarser than the top of the scale keep the coarsest colour (the arrow on the
+colourbar).
+
+In buffer mode `-p` writes **two separate figures** rather than one two-panel
+image — `<name>_resolution.png` (the map) and `<name>_resolution_profile.png`
+(cell spacing vs signed distance to the region boundary, with the requested
+profile overlaid and the relaxation zone highlighted). They answer different
+questions and each needs the full width of a page. `--preview` splits the same
+way. Without a buffer there is no profile, so only the map is written. If you
+point `--plot-out` at a file, the profile lands beside it with `_profile`
+appended to the name.
+
+> **Note (changed):** the plots now report cell spacing as `sqrt(2A/√3)`, the
+> spacing of a hexagon of area `A`, instead of `2·sqrt(A/π)`, the diameter of an
+> equal-area disc. The old formula overstated the spacing by 5.0 %, so a
+> nominally 5 km mesh plotted as 5.24 km. Plots made before and after this
+> change differ by that 5 %; the new numbers are the correct ones.
+
 ## Where meshes are saved
 
 **By default everything is written under `$MPAS_ROOT/grids/<output>/`**, where
@@ -51,7 +72,7 @@ Creates a mesh that covers the whole planet. The grid type is chosen with `-g`:
 | `-r`, `--high` | `30` | `unif`, `localref` | High-resolution cell spacing, in km |
 | `-l`, `--low` | `150` | `icos`, `localref` | `icos`: refinement **level** (1–15). `localref`: global (low-res) spacing in km |
 | `-rad`, `--radius` | `50` | `localref` | Radius of the high-resolution area, in km |
-| `-tr`, `--transitionradius` | `600` | `localref` | Width of the transition zone between high and low resolution, in km |
+| `-tr`, `--transitionradius` | `600` | `localref` | Steepness of the transition between high and low resolution: the slope is `100/tr` km per km, so the belt is `l × tr / 100` km wide, **not `tr`** |
 | `-clat`, `--center_latitude` | `0` | `localref` | Latitude (deg) of the centre of refinement |
 | `-clon`, `--center_longitude` | `0` | `localref` | Longitude (deg) of the centre of refinement |
 | `-o`, `--output` | `grid` | all | Output basename (folder + files under `$MPAS_ROOT/grids/`) |
@@ -100,6 +121,113 @@ area of interest **plus the 7-cell relaxation belt** (`--buffer`, default
 - the coarser transition belt falls **outside** the cut and is **discarded**,
   minimising grid points that get generated but never used.
 
+### Buffer / transition zone (optional)
+
+A uniform regional mesh makes the lateral boundary jump straight from the
+driving-data spacing (GFS 0.25° ≈ 25 km, ERA5 ≈ 31 km) to your regional spacing
+in a single step. Pass **`--buffer-res`** to instead keep a buffer ring *inside*
+the domain, over which the spacing coarsens smoothly from `-r` to the driving
+resolution, so the LBC-driven flow can adjust gradually:
+
+```
+        area of interest        ramp            flat plateau
+   |<--------- R_core --------->|<--- W --->|<------- P ------->|
+   |            -r              | -r -> ro  |         ro        |  -> -l
+                                            ^          ^mesh edge
+                                            LBC zone starts (.pts)
+                                            |<- 7 relaxation rings ->|
+```
+
+**Everything up to the mesh edge is in the final grid.** The points-file
+boundary is the *inner* edge of the lateral-BC zone, not a discard line:
+`create_region` grows its 7 relaxation rings **outward** from it, and those
+cells are part of `<name>.grid.nc`. The only thing thrown away is what lies
+beyond the mesh edge, which never appears in the regional plots at all.
+
+MPAS-Limited-Area grows its **7 relaxation rings outward** from the boundary in
+the `.pts` file, so the cut is placed a couple of cells *into* the plateau and
+all seven rings land in the flat `ro` band. A locally uniform relaxation zone,
+comparable to the driving data, is exactly what limited-area practice asks for.
+Everything is sized for you; `--buffer-res` is the only flag you must give.
+
+**Width and abruptness are one knob, seen two ways.** Walking outward one cell
+advances the distance by `h` and grows `h` by `(g-1)·h`, so `g = 1 + dh/ds` and
+
+```
+W = C · (buffer_res − r) / (decay − 1)
+```
+
+where `decay` is the maximum size ratio between adjacent cells and `C` depends
+on the ramp shape. Give `--buffer-width` **or** `--buffer-decay`; the other
+follows. Mesh-quality guidance is `decay` ≈ 1.05–1.15 — and note that jigsaw is
+called with **no gradient limiter**, so a ramp that is too sharp shows up
+directly as poor cells with nothing to catch it.
+
+| `--buffer-profile` | `C` | notes |
+|---|---|---|
+| `linear` | 1.0 | narrowest for a given decay, but the slope kinks at both joins |
+| `smoothstep` | 1.5 | cheapest smooth option (C¹) |
+| `cosine` | 1.5708 | C¹ |
+| `smootherstep` | 1.875 | C² |
+| `tanh` *(default)* | 2.3444 | mpas_tools-style; renormalised so it reaches both ends exactly |
+
+Widths for `-r 5 --buffer-res 25` at `--buffer-decay 1.10`: linear 200 km,
+smoothstep 300 km, cosine 314 km, smootherstep 375 km, tanh 469 km.
+
+`--buffer-decay` sets the gradient of the **requested** profile. On the mesh
+jigsaw actually returns, that gradient is compounded with the generator's own
+cell-to-cell scatter, which is present in a uniform mesh too. Measured on the
+5 km example:
+
+| neighbour size ratio | max | p99.9 | p99 |
+|---|---|---|---|
+| uniform 5 km mesh (no buffer, control) | 1.193 | 1.132 | 1.064 |
+| buffered mesh — uniform core | 1.163 | 1.145 | 1.079 |
+| buffered mesh — ramp (`decay` 1.10) | 1.321 | 1.236 | 1.145 |
+| buffered mesh — plateau | 1.167 | 1.151 | 1.109 |
+
+The core and plateau match the control, and the ramp comes out at roughly
+`decay × 1.19` — the requested gradient on top of the baseline scatter. So a
+realised worst-case ratio below ~1.2 is not achievable at any `decay`; judge a
+ramp by how far it sits **above the control**, not against 1.15 in absolute
+terms.
+
+**Tune it with `--preview` first.** It resolves the geometry, prints the table
+below and saves the *analytic* cell-width map plus its radial profile — in a few
+seconds, instead of the minutes a real 5 km mesh costs:
+
+```bash
+python create_regional_grid.py -r 5 -l 200 --shape circle \
+       -clat -22.33 -clon -49.04 --region-radius 650 \
+       --buffer-res 25 --buffer-decay 1.10 -o sp-state_05km_buf --preview
+```
+
+```
+Buffer / transition zone
+------------------------
+  area of interest (R_core)             650.0 km
+  buffer ramp width                     468.9 km  (5.0 -> 25.0 km, tanh)
+  max cell-to-cell growth ratio         1.100    (~44.3 cells across the ramp)
+  flat 25.0 km plateau                  300.0 km  (2 pre + 7 relaxation + 3 post cells)
+  cut boundary (points file)           1168.9 km
+  regional mesh outer edge             1343.9 km
+  outer ramp to 200 km starts at       1418.9 km  (discarded by the cut)
+```
+
+Drop `--preview` to build it. The same table is written to
+`<output>_domain.txt` next to the grid, because with a buffer
+**`--region-radius` no longer describes the extent of the mesh** — only the
+inner core is at the resolution you asked for.
+
+The buffer follows the **actual region shape** for all four `--shape` values,
+not just circles: the profile is a function of the signed distance to the region
+boundary, and the cut boundary is a true constant-distance offset of it. A box
+therefore gets a buffer of even width all the way round, including at its
+corners, and concave polygons offset without self-intersecting. (Circles take an
+exact analytic fast path.) One caveat: a region whose centre is more than
+~8000 km from its own boundary is rejected, since the local-plane geometry no
+longer holds.
+
 ### Options
 
 | Flag | Default | Meaning |
@@ -116,8 +244,23 @@ area of interest **plus the 7-cell relaxation belt** (`--buffer`, default
 | `--lat-min` / `--lat-max` | — | South / north edges (deg) — **box** |
 | `--lon-min` / `--lon-max` | — | West / east edges (deg) — **box** |
 | `--polygon-file` | — | Text file with `lat, lon` boundary points (one per line; `#` comments) — **polygon** |
-| `--buffer` | `10 × -r` | Extra high-res margin (km) around the area of interest so the relaxation belt also stays at full resolution |
-| `-tr`, `--transitionradius` | `600` | Transition-zone width (km). Lies outside the region and is discarded, so it mainly affects generation cost |
+| `--points-file` | — | Rebuild the region from an existing `<name>.pts` (see below). Replaces `--shape` and its coordinates |
+| `--buffer` | `10 × -r` | Extra full-resolution margin (km) around the area of interest so the relaxation belt also stays at full resolution. With `--buffer-res` that job is done by the plateau instead, so it just widens the full-resolution core and defaults to `0` |
+| `-tr`, `--transitionradius` | `600` | Steepness of the (discarded) outer ramp towards `-l`, as a reference length in km. The slope is `100/tr` km per km, so the belt is actually **`l × tr / 100` km wide, not `tr`** (1200 km at the defaults). Mainly affects generation cost |
+
+#### Buffer / transition zone (see above)
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--buffer-res` (`--outer-resolution`) | *(off)* | Cell spacing (km) at the **outer edge** of the regional domain — your lateral-BC resolution. **Enables the buffer.** Must be coarser than `-r` and finer than `-l` |
+| `--buffer-width` | *derived* | Width (km) of the ramp. Mutually exclusive with `--buffer-decay` |
+| `--buffer-decay` (`--buffer-growth`) | `1.10` | Max size ratio between adjacent cells in the ramp. Larger = more abrupt = narrower ring |
+| `--buffer-profile` | `tanh` | `tanh`, `smoothstep`, `smootherstep`, `cosine` or `linear` |
+| `--relax-pre-cells` | `2` | Plateau cells kept **inside** the cut boundary, absorbing the one-cell jitter of the region-marking walk |
+| `--relax-post-cells` | `3` | Plateau cells kept beyond the 7th relaxation ring before the discarded outer ramp starts |
+| `--preview` | *(off)* | Resolve the geometry, print the table, plot the **analytic** field, then exit without running jigsaw |
+| `--hfun-dlat` | `-r/200` | Working-grid spacing (deg) for the resolution field. It only has to resolve the *transition*, not the cell size, so a coarser grid is usually fine and much cheaper. Advanced |
+| `--hfun-float32` | *(off)* | Store the field in single precision: halves memory, smaller intermediate HFUN file. Advanced |
 | `-o`, `--output` | `regional_grid` | Output basename (folder + files under `$MPAS_ROOT/grids/`) |
 | `-p`, `--plot` | *(off)* | Flag (no value). If given, saves a quick-look PNG of the regional mesh resolution next to the grid, as `$MPAS_ROOT/grids/<output>/<output>_resolution.png`. Uses cartopy for coastlines + country **and state** borders when available |
 | `--plot-out` | *(grid dir)* | Custom path for the resolution plot — a file, or a directory in which `<output>_resolution.png` is written. Implies `--plot` |
@@ -158,6 +301,31 @@ pass `-clat -clon`:
 -30, -54
 ```
 
+#### Reusing an existing region — `--points-file`
+
+A `<name>.pts` already *is* the region geometry, so you can rebuild a domain at
+a different resolution without retyping anything:
+
+```bash
+# same domain as grids/meqbr_05km, now with a 25 km buffer ring
+python create_regional_grid.py --points-file $MPAS_ROOT/grids/meqbr_05km/meqbr_05km.pts \
+       -r 5 -l 200 --buffer-res 25 --buffer-decay 1.10 -o meqbr_05km_buf -p
+```
+
+It handles all three types a points file can hold (`circle`, `ellipse`,
+`custom`) and the geometry round-trips exactly. Two things to know:
+
+- **A `.pts` stores only the geometry**, not the resolution. `-r`, `-l`, `-tr`
+  and every `--buffer-*` flag still have to be given on the command line —
+  which is the point: it is how you rebuild the *same domain* at a *new*
+  resolution. Anything you pass explicitly (`-clat`, `--region-radius`, …)
+  overrides the file.
+- **Do not feed back a `.pts` that was written with a buffer.** In buffer mode
+  the points file holds the *cut* boundary, already pushed outward past the
+  ramp, so reusing it would grow the domain by that offset all over again. The
+  script warns you when it spots the tell-tale `<name>_domain.txt` beside it;
+  reuse the original area of interest instead.
+
 #### Drawing the polygon interactively — `draw_region.py`
 
 Instead of typing coordinates, you can **click them on a map**. `draw_region.py`
@@ -189,6 +357,11 @@ Run `python create_regional_grid.py -h` for the built-in help.
 | `<name>.pts`          | region specification ("points file")              |
 | `<name>.grid.nc`      | **the regional mesh**                             |
 | `<name>.graph.info`   | partition graph (for `gpmetis`)                   |
+| `<name>_domain.txt`   | resolved geometry summary (buffer mode only)      |
+| `<name>_resolution.png` | resolution map (`-p`)                           |
+| `<name>_resolution_profile.png` | resolution profile (`-p`, buffer mode)  |
+| `<name>_preview.png`  | analytic cell-width map (`--preview`)             |
+| `<name>_preview_profile.png` | analytic profile (`--preview`)             |
 
 ### Dependency: MPAS-Limited-Area (one-time install)
 
