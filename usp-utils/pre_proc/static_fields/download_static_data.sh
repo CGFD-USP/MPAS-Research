@@ -51,7 +51,7 @@
 #                   any of ugwp,15s,bnu  (or 'all'). Default: none.
 #   --dest DIR      Base directory. Default: repo root above usp-utils.
 #                   Tarballs cache into <dest>/met_data; datasets extract into
-#                   <dest>/WPS_GEOG (= config_geog_data_path).
+#                   <dest>/met_data/WPS_GEOG (= config_geog_data_path).
 #   --no-extract    Download/verify the archives but do not extract them.
 #
 # Download just one component by setting the other to 'none', e.g.:
@@ -93,7 +93,7 @@ MESH_BASE="https://www2.mmm.ucar.edu/projects/mpas/atmosphere_meshes"
 MPAS_BASE="https://www2.mmm.ucar.edu/projects/mpas"
 GEOG_BASE="https://www2.mmm.ucar.edu/wrf/src/wps_files"
 DL_DIR="$DEST/met_data"       # tarball download cache
-GEOG_DIR="$DEST/WPS_GEOG"     # extraction target == config_geog_data_path
+GEOG_DIR="$DEST/met_data/WPS_GEOG"   # extraction target == config_geog_data_path
 
 case "$GEOG" in
     mpas) GEOG_FILE="mpas_static.tar.bz2";            GEOG_URL="$MPAS_BASE/mpas_static.tar.bz2" ;;
@@ -179,6 +179,7 @@ if [ "$MESH" != "none" ]; then
             else
                 echo -e "${INFO} Extracting ${MESH}.tar.gz"
                 tar xzf "$mesh_tar" -C "$MESH_DIR" && echo -e "${OK} extracted ${MESH} (grid.nc + graph.info[.part.N])" || { echo -e "${ERR} Failed to extract ${MESH}.tar.gz"; failures=$((failures+1)); }
+            fi
         fi
         record_sha "$MESH_DIR" "${MESH}.tar.gz"
     else
