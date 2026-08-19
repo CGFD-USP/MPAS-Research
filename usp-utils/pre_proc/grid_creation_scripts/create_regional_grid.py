@@ -24,6 +24,12 @@ import argparse
 import os
 import sys
 
+# Make the shared libs importable even when setup_environment.sh was not sourced
+# (it normally adds usp-utils/libs/py to PYTHONPATH). You still need MPAS_ROOT,
+# which setup_environment.sh also sets.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "..", "libs", "py"))
+
 import jigsaw_util as jutil
 import regional_util as rutil
 
