@@ -52,8 +52,9 @@ records `SHA256SUMS`):
   MPAS), `--geog low` (~150 MB), `--geog none` (skip).
 
 The mesh lands in `<dest>/grids/`; the geog tarball is cached in
-`<dest>/met_data/` and **extracted into `<dest>/WPS_GEOG/`** (override the base
-with `--dest DIR`). Point `config_geog_data_path` at that `WPS_GEOG/` directory.
+`<dest>/met_data/` and **extracted into `<dest>/met_data/WPS_GEOG/`** (override
+the base with `--dest DIR`). Point `config_geog_data_path` at that
+`met_data/WPS_GEOG/` directory.
 
 > **Extraction pitfall (the usual cause of failures).** The bundle carries a
 > single leading directory (`mpas_static/`). The helper strips it so datasets
