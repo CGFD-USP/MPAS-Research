@@ -13,6 +13,9 @@ Set up what you need **before** running any pre/post-processing:
      [`install/environment_setup.md`](install/environment_setup.md)
    - MPAS model build (compile/run the model) →
      [`install/README.md`](install/README.md)
+   - Or both at once in an apptainer image, on machines without a usable
+     compiler/MPI stack →
+     [`install/container/README.md`](install/container/README.md)
 2. **Activate the toolbox** (each session) to use the Python/Julia scripts:
    ```bash
    source usp-utils/setup_environment.sh        # or setup_environment.fish if using the fish shell

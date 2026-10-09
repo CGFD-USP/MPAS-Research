@@ -23,6 +23,11 @@ env -u LD_LIBRARY_PATH julia install_julia_environment.jl
 
 Both scripts are idempotent — re-running them updates the existing environments.
 
+To use local checkouts of the Julia packages (a branch, uncommitted edits) in the
+shared environment, clone them into one folder and run
+`julia develop_julia_packages.jl <folder>`; see
+[`container/README.md`](container/README.md#local-checkouts-of-the-julia-packages).
+
 ## 2. Activate (every session)
 
 From the `usp-utils/` directory:

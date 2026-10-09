@@ -5,6 +5,10 @@ A minimal toolchain for compiling and running MPAS-Atmosphere v8.
 > Setting up the **Python/Julia pre/post-processing tools** instead? See
 > [`environment_setup.md`](environment_setup.md). This file is only about
 > building and running the model.
+>
+> On a machine with apptainer, the image of [`container/`](container/README.md)
+> already has the compilers, MPI and PnetCDF (and the pre/post-processing tools),
+> so nothing below needs to be installed.
 
 ## Quick start
 

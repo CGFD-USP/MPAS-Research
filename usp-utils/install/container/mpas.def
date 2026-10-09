@@ -1,0 +1,111 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+# MPAS build and run environment with the pre- and post-processing tools of
+# usp-utils: GNU compilers, Open MPI and PnetCDF for the model (SMIOL I/O, PIO
+# unset), NetCDF tools, the conda environment of libs/cgfd-usp-mpas.yml, the
+# shared Julia environment of install/install_julia_environment.jl (without
+# GLMakie) and TeX Live for the Copernicus class. Built by build.sh, which
+# stages the environment files as the build context.
+
+%files
+    cgfd-usp-mpas.yml /opt/build/cgfd-usp-mpas.yml
+    install_julia_environment.jl /opt/build/install_julia_environment.jl
+    precompile_julia.jl /opt/build/precompile_julia.jl
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential gfortran cmake m4 file git ca-certificates curl bzip2 xz-utils \
+        openmpi-bin libopenmpi-dev \
+        netcdf-bin nco \
+        texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+        texlive-fonts-recommended texlive-fonts-extra texlive-plain-generic \
+        texlive-lang-other texlive-publishers texlive-science \
+        texlive-bibtex-extra cm-super tipa latexmk
+    rm -rf /var/lib/apt/lists/*
+
+    # PnetCDF, the only external I/O library of MPAS with SMIOL
+    PNETCDF_VERSION=1.14.1
+    PNETCDF_SHA256=6f0f7221006c211fce9ddd2c008796b8c69dd717b2ad1be0b4027fc328fd3220
+    curl -fsSL -o /tmp/pnetcdf.tar.gz \
+        "https://parallel-netcdf.github.io/Release/pnetcdf-${PNETCDF_VERSION}.tar.gz"
+    echo "$PNETCDF_SHA256  /tmp/pnetcdf.tar.gz" | sha256sum -c -
+    mkdir /tmp/pnetcdf
+    tar xzf /tmp/pnetcdf.tar.gz -C /tmp/pnetcdf --strip-components=1
+    cd /tmp/pnetcdf
+    ./configure --prefix=/opt/pnetcdf MPICC=mpicc MPICXX=mpicxx MPIF77=mpif77 MPIF90=mpif90 \
+        FFLAGS=-fallow-argument-mismatch FCFLAGS=-fallow-argument-mismatch
+    make -j16
+    make install
+    cd /
+    rm -rf /tmp/pnetcdf /tmp/pnetcdf.tar.gz
+    echo /opt/pnetcdf/lib > /etc/ld.so.conf.d/pnetcdf.conf
+    ldconfig
+
+    # Python: the conda environment of usp-utils, through micromamba
+    MAMBA_VERSION=2.9.0-0
+    MAMBA_SHA256=366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3
+    curl -fsSL -o /usr/local/bin/micromamba \
+        "https://github.com/mamba-org/micromamba-releases/releases/download/${MAMBA_VERSION}/micromamba-linux-64"
+    echo "$MAMBA_SHA256  /usr/local/bin/micromamba" | sha256sum -c -
+    chmod 755 /usr/local/bin/micromamba
+    export MAMBA_ROOT_PREFIX=/opt/conda
+    micromamba create -y -n cgfd-usp-mpas -f /opt/build/cgfd-usp-mpas.yml
+    micromamba clean -a -y
+    # python of the environment ahead of the system one, its other tools after
+    # the system compilers and MPI (see %environment)
+    for b in python python3 pip pip3; do
+        ln -sf /opt/conda/envs/cgfd-usp-mpas/bin/$b /usr/local/bin/$b
+    done
+
+    JULIA_VERSION=1.12.7
+    JULIA_SHA256=4e7e9e776634d24835250de67cde39b0d4af15bc432eb20697e6be6c28ea69e8
+    curl -fsSL -o /tmp/julia.tar.gz \
+        "https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_VERSION%.*}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+    echo "$JULIA_SHA256  /tmp/julia.tar.gz" | sha256sum -c -
+    mkdir -p /opt/julia
+    tar xzf /tmp/julia.tar.gz -C /opt/julia --strip-components=1
+    rm /tmp/julia.tar.gz
+
+    # Read-only package depot, compiled for the CPU targets of the Julia
+    # binaries so that nemesis and kami nodes both load it
+    export JULIA_DEPOT_PATH=/opt/julia-depot:
+    export JULIA_PKG_PRECOMPILE_AUTO=0
+    export JULIA_CPU_TARGET='generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1);x86-64-v4,-rdrnd,base(1)'
+    CGFD_JULIA_SKIP=GLMakie /opt/julia/bin/julia --startup-file=no /opt/build/install_julia_environment.jl
+    /opt/julia/bin/julia --startup-file=no /opt/build/precompile_julia.jl
+    rm -rf /opt/build /opt/julia-depot/logs
+    chmod -R a+rX /opt/julia-depot /opt/conda
+
+%environment
+    export LC_ALL=C.UTF-8
+    export PATH=/opt/julia/bin:/usr/local/bin:$PATH:/opt/conda/envs/cgfd-usp-mpas/bin
+    export PNETCDF=/opt/pnetcdf
+    export MAMBA_ROOT_PREFIX=/opt/conda
+    # what activating the conda environment sets
+    export ESMFMKFILE=/opt/conda/envs/cgfd-usp-mpas/lib/esmf.mk
+    export GEOMETRIC_DATA_DIR=/opt/conda/envs/cgfd-usp-mpas/share/geometric_data
+    export PROJ_DATA=/opt/conda/envs/cgfd-usp-mpas/share/proj
+    export UDUNITS2_XML_PATH=/opt/conda/envs/cgfd-usp-mpas/share/udunits/udunits2.xml
+    # writable depot first (CGFD package caches, anything added later), image depot next
+    export JULIA_DEPOT_PATH="${MPAS_JULIA_DEPOT:-$HOME/.julia-mpas}:/opt/julia-depot:"
+
+%test
+    gfortran --version | head -1
+    mpif90 --showme:version
+    /opt/pnetcdf/bin/pnetcdf-config --version
+    python3 -c 'import numpy, xarray, matplotlib, cartopy, mpas_tools, jigsawpy; print("python ok")'
+    julia --startup-file=no --project=@cgfd-usp-mpas -e 'using NCDatasets, Comonicon; println("julia ok")'
+    latexmk -v | head -1
+
+%labels
+    Description "MPAS build and run environment with the usp-utils Python and Julia tools and TeX Live"
+
+%help
+    gfortran, Open MPI and PnetCDF (PNETCDF=/opt/pnetcdf) to build and run
+    MPAS with SMIOL, NetCDF tools (ncdump, NCO), the cgfd-usp-mpas Python
+    environment, Julia with the shared environment @cgfd-usp-mpas, and TeX
+    Live with latexmk. Use it through usp-utils/install/container/run.sh.
