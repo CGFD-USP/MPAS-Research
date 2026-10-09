@@ -27,6 +27,10 @@ To use local checkouts of the Julia packages (a branch, uncommitted edits) in th
 shared environment, clone them into one folder and run
 `julia develop_julia_packages.jl <folder>`; see
 [`container/README.md`](container/README.md#local-checkouts-of-the-julia-packages).
+This changes the shared environment, so every script using `@cgfd-usp-mpas` then
+runs the checkouts, and `Pkg.update` no longer updates them. `Pkg.free(<name>)` in
+the environment, or re-running `install_julia_environment.jl`, returns to the
+GitHub versions.
 
 ## 2. Activate (every session)
 
