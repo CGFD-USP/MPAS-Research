@@ -30,10 +30,11 @@ import numpy as np
 import xarray as xr
 import pywinter.winter as pw
 
+from oisst_land_fill import fill_land_sst_nearest_ocean
+
 PSL = "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres"
 SST_LTM = f"{PSL}/sst.day.mean.ltm.1991-2020.nc"
 ICE_LTM = f"{PSL}/icec.day.mean.ltm.1991-2020.nc"
-LAND_SST_FILL_K = 273.15
 
 
 def clim_index(d) -> int:
@@ -97,10 +98,17 @@ def main() -> int:
         idx = clim_index(d)
         sst_c = np.asarray(sst_ds[sst_var].isel(time=idx).values, dtype="float64")
         ice_c = np.asarray(ice_ds[ice_var].isel(time=idx).values, dtype="float64")
-        land = ~np.isfinite(sst_c)
-        sst_k = np.where(land, LAND_SST_FILL_K, sst_c + 273.15)
+        sst_filled_c, land = fill_land_sst_nearest_ocean(sst_c)
+        sst_k = sst_filled_c + 273.15
         seaice = np.nan_to_num(ice_c, nan=0.0)
         landsea = land.astype("float32")
+        ocean = ~land
+        print(
+            "[QC] coastal-safe SST: "
+            f"preserved {ocean.sum():,} ocean cells; "
+            f"extended {land.sum():,} land cells from nearest ocean; "
+            f"ocean range {np.nanmin(sst_c):.2f}..{np.nanmax(sst_c):.2f} degC"
+        )
         variables = [
             pw.V2d("SST", arr2d(sst_k)),
             pw.V2d("SEAICE", arr2d(seaice)),
