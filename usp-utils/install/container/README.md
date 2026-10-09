@@ -39,6 +39,7 @@ out of git by listing it in `.git/info/exclude`.
 | `build.sh` | stages the environment files and builds the image |
 | `precompile_julia.jl` | build step that precompiles the Julia environment |
 | `run.sh` | runs a command in the image |
+| `build_mpas.sh` | builds MPAS-Atmosphere of one commit in the image (below) |
 | `../develop_julia_packages.jl` | points the Julia environment at local checkouts of its packages (below) |
 
 ## Use
@@ -48,15 +49,17 @@ out of git by listing it in `.git/info/exclude`.
 ```bash
 c=usp-utils/install/container/run.sh
 bash $c bash                                                     # shell in the image
-bash $c make gnu CORE=init_atmosphere AUTOCLEAN=true PRECISION=double
-bash $c make gnu CORE=atmosphere AUTOCLEAN=true PRECISION=double
+bash $c make gnu CORE=init_atmosphere AUTOCLEAN=true PRECISION=double   # in the working tree,
+bash $c make gnu CORE=atmosphere AUTOCLEAN=true PRECISION=double        # for development
 bash $c mpirun -n 8 ./atmosphere_model                           # from a run folder
 bash $c julia usp-utils/pre_proc/grid_creation_scripts/regenerate-mesh.jl --help
 bash $c python3 usp-utils/post_proc/plotting_scripts/mpas_plot.py --help
 bash $c latexmk -pdf paper.tex
 ```
 
-The image sets `PNETCDF` and the paths, and `run.sh` sets `MPAS_ROOT` and `PYTHONPATH`, so
+Builds for runs whose results are kept come from `build_mpas.sh` (below), which records the
+commit and checksums. The image sets `PNETCDF` and the paths, and `run.sh` sets `MPAS_ROOT` and
+`PYTHONPATH`, so
 neither `mpas_build_env.sh` nor `setup_environment.sh` is sourced inside it.
 
 | variable | purpose | default |
@@ -69,6 +72,43 @@ neither `mpas_build_env.sh` nor `setup_environment.sh` is sourced inside it.
 
 On the machines with a profile in [`../../machines/`](../../machines/README.md), sourcing its
 `env.sh` sets `APPTAINER`, `MPAS_BIND` and `MPAS_HIDE_ENV`.
+
+## MPAS builds
+
+`build_mpas.sh` builds `init_atmosphere_model` and `atmosphere_model` of one commit in the image:
+
+```bash
+source usp-utils/machines/env.sh                                   # MPAS_BUILD_ROOT, APPTAINER
+bash usp-utils/install/container/build_mpas.sh master double       # Felipe's master, double precision
+bash usp-utils/install/container/build_mpas.sh consistency-analysis   # a branch, single precision
+bash usp-utils/install/container/build_mpas.sh 61c72867 double     # a commit
+```
+
+The model is compiled from a clean copy of the commit (`git archive`), whatever branch is checked
+out and whatever is uncommitted in the working tree, so commit (and `git fetch` for a branch
+taken from `origin`) before building. Each build goes to its own folder,
+`$MPAS_BUILD_ROOT/<ref>_<commit>_<precision>/` (default `~/mpas-builds`), and an existing folder
+is never overwritten. It holds:
+
+| file | content |
+|---|---|
+| `init_atmosphere_model`, `atmosphere_model` | the executables |
+| `namelist.*`, `streams.*`, `stream_list.*` | the default namelists and streams of the commit |
+| `physics/` | the WRF physics tables (single and `.DBL` versions), downloaded by the build from MPAS-Data |
+| `BUILD_INFO` | ref, commit, precision, make options, image and its md5, compiler, MPI and PnetCDF versions, md5 of both executables, and the commits of the Julia checkouts of `external/` |
+| `build.log` | the compiler output |
+
+A build takes about 2 min (`MPAS_MAKE_JOBS`, default 16 parallel jobs) and 36 MB, and needs
+network access for the physics tables. The build uses generic compiler flags, so one build runs
+on every machine that runs the image. A run folder links the executables and the physics tables
+and copies the namelists and streams to edit them:
+
+```bash
+b=~/mpas-builds/master_61c72867_double
+ln -s $b/init_atmosphere_model $b/atmosphere_model $b/physics/* .
+cp $b/namelist.* $b/streams.* $b/stream_list.* .
+bash $MPAS_ROOT/usp-utils/install/container/run.sh mpirun -n 8 ./atmosphere_model
+```
 
 ## Local checkouts of the Julia packages
 
