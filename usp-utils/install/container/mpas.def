@@ -90,8 +90,9 @@ From: ubuntu:24.04
     export GEOMETRIC_DATA_DIR=/opt/conda/envs/cgfd-usp-mpas/share/geometric_data
     export PROJ_DATA=/opt/conda/envs/cgfd-usp-mpas/share/proj
     export UDUNITS2_XML_PATH=/opt/conda/envs/cgfd-usp-mpas/share/udunits/udunits2.xml
-    # writable depot first (CGFD package caches, anything added later), image depot next
-    export JULIA_DEPOT_PATH="${MPAS_JULIA_DEPOT:-$HOME/.julia-mpas}:/opt/julia-depot:"
+    # writable depot first (packages compiled at run time, anything added
+    # later), image depot next; run.sh sets it from MPAS_JULIA_DEPOT
+    export JULIA_DEPOT_PATH="$HOME/.julia-mpas:/opt/julia-depot:"
 
 %test
     gfortran --version | head -1

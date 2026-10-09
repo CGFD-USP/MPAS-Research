@@ -15,7 +15,9 @@ Set up what you need **before** running any pre/post-processing:
      [`install/README.md`](install/README.md)
    - Or both at once in an apptainer image, on machines without a usable
      compiler/MPI stack →
-     [`install/container/README.md`](install/container/README.md)
+     [`install/container/README.md`](install/container/README.md); on a machine with a
+     profile in [`machines/`](machines/README.md), `bash machines/setup.sh` sets it
+     all up
 2. **Activate the toolbox** (each session) to use the Python/Julia scripts:
    ```bash
    source usp-utils/setup_environment.sh        # or setup_environment.fish if using the fish shell
@@ -46,6 +48,7 @@ recommended way to avoid accidentally committing model output.
 |------------------------|---------------------------------------------------------|
 | `setup_environment.sh` | **Source each session** for the pre/post-proc tools — `.fish` variant for the fish shell |
 | `install/`             | Installers + setup guides (environment + model build)   |
+| `machines/`            | Machine profiles (data roots, apptainer, cores, scheduler) and the setup of a new machine for the container track |
 | `libs/`                | Conda env file (`cgfd-usp-mpas.yml`) and Python modules |
 | `pre_proc/`            | Pre-processing scripts (static fields, real data, …)    |
 | `post_proc/`           | Post-processing / plotting scripts                      |

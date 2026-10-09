@@ -65,6 +65,10 @@ neither `mpas_build_env.sh` nor `setup_environment.sh` is sourced inside it.
 | `APPTAINER` | apptainer executable | `apptainer` or `singularity` on `PATH` |
 | `MPAS_BIND` | extra folders visible in the image, colon separated (data outside home) | none |
 | `MPAS_JULIA_DEPOT` | writable Julia depot | `~/.julia-mpas` |
+| `MPAS_HIDE_ENV` | variables hidden from the image, space separated (a scheduler's job variables) | none |
+
+On the machines with a profile in [`../../machines/`](../../machines/README.md), sourcing its
+`env.sh` sets `APPTAINER`, `MPAS_BIND` and `MPAS_HIDE_ENV`.
 
 ## Local checkouts of the Julia packages
 
@@ -81,8 +85,9 @@ done
 cd .. && bash usp-utils/install/container/run.sh julia usp-utils/install/develop_julia_packages.jl external
 ```
 
-`develop_julia_packages.jl` copies `@cgfd-usp-mpas` from the image into `MPAS_JULIA_DEPOT` and
-points it at every package of `external/`, so the scripts' `--project=@cgfd-usp-mpas` uses the
+`develop_julia_packages.jl` copies `@cgfd-usp-mpas` from the image into `MPAS_JULIA_DEPOT`, afresh
+on every run so that the copy follows the image after a rebuild, and points it at every package
+of `external/`, so the scripts' `--project=@cgfd-usp-mpas` uses the
 checkouts while the other dependencies stay those precompiled in the image. Edits take effect on
 the next Julia start, after a recompilation of the changed packages. Deleting
 `$MPAS_JULIA_DEPOT/environments/cgfd-usp-mpas` returns to the image's environment. The same
@@ -90,9 +95,12 @@ script works natively, where it develops the checkouts in the `~/.julia` environ
 
 ## Notes
 
-- Julia packages installed from git (TensorsLite and the CGFD packages) compile on their first
-  use on each CPU type, about a minute, into `MPAS_JULIA_DEPOT`, and load in seconds afterwards.
-  The other dependencies are precompiled in the image for the CPUs of current x86-64 machines.
+- Julia packages installed from git (TensorsLite and the CGFD packages) and SmallCollections
+  compile on their first use on each CPU type, about a minute, into `MPAS_JULIA_DEPOT`, and load
+  in seconds afterwards, until the next image build. LLVM fails on the SIMD code of the former for a generic CPU, and the
+  latter picks its instructions (AVX-512 or not) from the CPU it is compiled on, so an image
+  cache built on a newer CPU would crash on an older one. The other dependencies are
+  precompiled in the image for the CPUs of current x86-64 machines.
   The writable depot is separate from `~/.julia`, so a native `@cgfd-usp-mpas` environment does
   not shadow the image's one.
 - GLMakie needs a display and is left out. Plots in the image go through Python.
