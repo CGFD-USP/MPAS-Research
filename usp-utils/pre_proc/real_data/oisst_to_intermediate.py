@@ -14,11 +14,11 @@ Run inside the conda env that has xarray + pywinter:
         [--start YYYY-MM-DD --end YYYY-MM-DD] [--hour 00]
 
 OISST specifics handled here:
-- sst is in degC -> converted to Kelvin (+273.15); land (missing sst) is filled
-  with a constant and masked by LANDSEA.
+- sst is in degC -> converted to Kelvin (+273.15); missing land values are
+  extended from the nearest valid ocean point before MPAS interpolation.
 - ice is a 0-1 fraction -> SEAICE.
 - LANDSEA is derived from the sst mask (1 = land, 0 = water), as OISST has no
-  separate mask variable in the daily file.
+  separate mask variable in the daily file. The mask is preserved unchanged.
 - The grid is global 0.25 deg; latitude is flipped to ascending (S->N) if needed.
 """
 
@@ -31,7 +31,7 @@ import numpy as np
 import xarray as xr
 import pywinter.winter as pw
 
-LAND_SST_FILL_K = 273.15  # finite filler over land; ignored via LANDSEA
+from oisst_land_fill import fill_land_sst_nearest_ocean
 
 
 def _date_from_name(p: Path):
@@ -56,10 +56,18 @@ def convert_one(path: Path, outdir: Path, prefix: str, hour: str) -> bool:
         return a[::-1, :] if flip else a
 
     sst_v = sst.values
-    land = ~np.isfinite(sst_v)                  # land where sst is missing
-    sst_k = np.where(land, LAND_SST_FILL_K, sst_v + 273.15)
+    sst_filled_c, land = fill_land_sst_nearest_ocean(sst_v)
+    sst_k = sst_filled_c + 273.15
     seaice = np.nan_to_num(ice.values, nan=0.0)
     landsea = land.astype("float32")            # 1 = land, 0 = water
+
+    ocean = ~land
+    print(
+        "[QC] coastal-safe SST: "
+        f"preserved {ocean.sum():,} ocean cells; "
+        f"extended {land.sum():,} land cells from nearest ocean; "
+        f"ocean range {np.nanmin(sst_v):.2f}..{np.nanmax(sst_v):.2f} degC"
+    )
 
     variables = [
         pw.V2d("SST", arr2d(sst_k)),

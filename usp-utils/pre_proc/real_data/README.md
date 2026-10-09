@@ -72,6 +72,7 @@ and OISST (SST). `download_gfs.py` fails fast with the exact limit for out-of-ra
 | `download_oisst.py` | Downloads NOAA OISST v2.1 daily 0.25° SST/sea-ice NetCDF (NCEI) over a date range. For SST update files (scientific pipeline). |
 | `oisst_to_intermediate.py` | Converts OISST daily files to `SST:` intermediate files (SST→K, SEAICE, LANDSEA) — one per day. |
 | `oisst_clim_to_intermediate.py` | Builds `SST:` files from the OISST daily **climatology** (LTM 1991-2020, via OPeNDAP) for target dates with no observed SST (forecasts / typical-month runs). |
+| `oisst_land_fill.py` | Shared coastal-safe nearest-ocean extension used by both OISST converters; it preserves the observed ocean and `LANDSEA` exactly. |
 | `gfs_sst_to_intermediate.py` | Extracts SST/SEAICE/LANDSEA from a GFS GRIB into an `SST:` intermediate file (operational SST update). |
 
 One-shot wrappers (download + convert in one call, inside the conda env):
@@ -85,7 +86,7 @@ One-shot wrappers (download + convert in one call, inside the conda env):
 
 ## Dependencies
 
-The `cgfd-usp-mpas` conda env: `cfgrib` + `eccodes` (conda-forge) and `pywinter`
+The `cgfd-usp-mpas` conda env: `cfgrib` + `eccodes` + `scipy` (conda-forge) and `pywinter`
 (pip); plus `cdsapi` (pip) for the ERA5 path. Run with
 `conda run -n cgfd-usp-mpas python <script>.py ...`, or use the `prepare_*.sh` wrappers.
 ERA5 also needs a CDS account and `~/.cdsapirc`
@@ -266,11 +267,30 @@ cadence:
 ```
 
 > Notes. `SST` is written in **Kelvin** (OISST is degC → +273.15; GFS skin temp is
-> already K). `LANDSEA` is 1 = land / 0 = water; SST over land is a filler and is
-> masked out via `LANDSEA`. OISST starts 1981-09-01; very recent days come as
+> already K). `LANDSEA` is 1 = land / 0 = water. For OISST, missing land SST is
+> extended from the nearest valid ocean point before writing the intermediate,
+> while `LANDSEA` is preserved unchanged. This prevents a finite cold land constant
+> from entering MPAS coastal bilinear stencils. OISST starts 1981-09-01; very recent days come as
 > `_preliminary` files (handled automatically). OISST 0.25° matches the GFS/ERA5
 > atmosphere resolution — finer GHRSST products (e.g. MUR 0.01°) are overkill for a
 > 120–240 km mesh.
+
+### Why the land values are extended instead of left constant
+
+`init_atmosphere` case 8 interpolates the SST slab with `FOUR_POINT`/`SEARCH`
+while asking for source mask value `-1`. OISST `LANDSEA` is 0 (water) / 1 (land),
+so neither value is rejected by that path and a finite constant written over land
+enters the bilinear stencil at coastal ocean cells. With the old constant of
+273.15 K this put the OISST land fill straight into the first few cells from the
+coastline: on a ~5 km equatorial-margin mesh, 1226 ocean cells landed at exactly
+273.15 K, with a median distance to land of 5 km.
+
+Extending the land values from the nearest valid ocean point removes the jump
+without touching `LANDSEA` or any observed ocean value, so the native MPAS
+interpolation is left exactly as it is. `test_oisst_land_fill.py` covers the
+three properties that matter: ocean values are preserved bit-for-bit, longitude
+wraps periodically, and an all-land field is rejected rather than silently
+filled.
 
 ## Known issues / gotchas
 
