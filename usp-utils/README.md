@@ -1,20 +1,59 @@
-## usp-utils
-This directory contains several helper scripts and programs to use with MPAS
+# usp-utils
 
-In order to use the scripts the user should source the setup_environment.sh file:
-```sh
-. setup_environment.sh # or setup_environment.fish if using fish sell
-```
-This script will set the necessary environment variables and create the necessary directories, if needed, to use the scripts provided in this directory.
+Helper scripts and tools for working with MPAS: environment/build setup, plus
+pre- and post-processing.
 
-We also provide the `install_conda_environment.sh` script that installs a conda environment with all packages needed to use the scripts provided. This script needs to be run only once, or when the conda environment needs to be updated.
+## Where to start
 
-If the user has installed the conda environment provided by `install_conda_environment.sh`, the `setup_environment.sh` will also automatically enable it.
+Set up what you need **before** running any pre/post-processing:
 
-Pre and post processing scripts are placed in `./pre_proc` and `./post_proc` respectively.
+1. **Installation & environment** — see [`install/`](install/). Two independent
+   tracks, install only what you need:
+   - Python/Julia pre/post-processing tools →
+     [`install/environment_setup.md`](install/environment_setup.md)
+   - MPAS model build (compile/run the model) →
+     [`install/README.md`](install/README.md)
+2. **Activate the toolbox** (each session) to use the Python/Julia scripts:
+   ```bash
+   source usp-utils/setup_environment.sh        # or setup_environment.fish if using the fish shell
+   ```
+   This activates the **pre/post-processing** tools (Python/Julia). The model
+   build/run environment is a separate script (`install/mpas_build_env.sh`).
+3. **Run pre/post-processing** — the scripts in `pre_proc/` and `post_proc/`.
 
-Julia scipts (`.jl` files) rely on a shared environment called `cgfd-usp-mpas` which can be installed with the `install_julia_environment.jl` script. The same script can also be used to update the environment.
+## Where to put runs and data
 
-### Note to developers
+Sourcing `setup_environment.sh` creates three standard directories at the repo
+root (if they don't already exist). These are the **suggested locations** for the
+heavy, non-versioned files of the workflow:
 
-New python **modules** (scripts containing definitions that are imported into other scripts) should be placed into `./libs/py`, not in the same folder as the actual scripts importing it.
+| Directory   | Put here                                                        |
+|-------------|-----------------------------------------------------------------|
+| `runs/`     | Model run directories — one per simulation (the suggested place to run the model) |
+| `grids/`    | MPAS meshes                                                      |
+| `met_data/` | Meteorological input (GFS/ERA5 downloads, WPS intermediate files) |
+
+All three are **git-ignored**, so it is safe to keep large outputs here — a
+`git add .` will never stage them. Keeping your simulations under `runs/` is the
+recommended way to avoid accidentally committing model output.
+
+## Folder map
+
+| Path                   | What it is                                              |
+|------------------------|---------------------------------------------------------|
+| `setup_environment.sh` | **Source each session** for the pre/post-proc tools — `.fish` variant for the fish shell |
+| `install/`             | Installers + setup guides (environment + model build)   |
+| `libs/`                | Conda env file (`cgfd-usp-mpas.yml`) and Python modules |
+| `pre_proc/`            | Pre-processing scripts (static fields, real data, …)    |
+| `post_proc/`           | Post-processing / plotting scripts                      |
+
+## Pre- and post-processing
+
+The `pre_proc/` and `post_proc/` directories hold the data-preparation and
+plotting scripts, each documented in its own subdirectory. They are covered
+separately from this installation guide.
+
+## Note to developers
+
+New Python **modules** (files with definitions imported by other scripts) go in
+`libs/py`, not next to the scripts that import them.

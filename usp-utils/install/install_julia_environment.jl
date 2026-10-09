@@ -10,10 +10,10 @@ const pkgs = [
               PackageSpec("GLMakie"),
               PackageSpec("Comonicon"),
               PackageSpec(url="https://github.com/favba/TensorsLite.jl.git"),
-              PackageSpec(url="https://github.com/favba/TensorsLiteGeometry.jl.git"),
-              PackageSpec(url="https://github.com/favba/VoronoiMeshes.jl.git"),
-              PackageSpec(url="https://github.com/favba/VoronoiOperators.jl.git"),
-              PackageSpec(url="https://github.com/favba/MPASMeshes.jl.git")
+              PackageSpec(url="https://github.com/CGFD-USP/TensorsLiteGeometry.jl.git"),
+              PackageSpec(url="https://github.com/CGFD-USP/VoronoiMeshes.jl.git"),
+              PackageSpec(url="https://github.com/CGFD-USP/VoronoiOperators.jl.git"),
+              PackageSpec(url="https://github.com/CGFD-USP/MPASMeshes.jl.git")
              ]
 
 Pkg.activate("cgfd-usp-mpas", shared=true)
