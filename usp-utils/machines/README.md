@@ -8,6 +8,7 @@ so the same scripts run on every machine. Each machine has one profile, `<machin
 |---|---|
 | `env.sh` | picks and exports the profile of this machine (source it, bash) |
 | `setup.sh` | prepares a machine: data and build roots, the MPAS image, the Julia checkouts |
+| `submit.sh` | runs a command on the compute resources: detached without a scheduler, a one-node job with PBS |
 | `nemesis.sh` | nemesis, Polimi MOX workstation (168 cores, no scheduler) |
 | `kami.sh` | kami, Polimi MOX cluster (48 cores per node, OpenPBS) |
 | `_template.sh` | starting point for a new machine |
@@ -30,6 +31,18 @@ In every shell that runs the tools:
 ```bash
 source usp-utils/machines/env.sh
 ```
+
+Long runs go through `submit.sh`, which needs no change between machines:
+
+```bash
+bash usp-utils/machines/submit.sh <cores> <log> <command ...>
+```
+
+Without a scheduler it starts the command detached (`setsid nohup`) and prints its process id,
+which is also its session id (stop it with `pkill -s <id>`). With PBS it submits a job of
+`<cores>` cores on one node (`MPAS_QSUB_OPTS` adds options such as a walltime or
+`-l place=excl`) and prints the job id. Either way the command runs in the current folder and
+writes its output to `<log>`, since kami does not deliver the job output files.
 
 ## Variables
 
