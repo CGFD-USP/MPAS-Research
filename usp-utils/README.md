@@ -51,13 +51,17 @@ recommended way to avoid accidentally committing model output.
 | `machines/`            | Machine profiles (data roots, apptainer, cores, scheduler) and the setup of a new machine for the container track |
 | `libs/`                | Conda env file (`cgfd-usp-mpas.yml`) and Python modules |
 | `pre_proc/`            | Pre-processing scripts (static fields, real data, …)    |
+| `proc/`                | Benchmark runs, one folder per benchmark, on any machine with a profile in `machines/` |
 | `post_proc/`           | Post-processing / plotting scripts                      |
 
 ## Pre- and post-processing
 
 The `pre_proc/` and `post_proc/` directories hold the data-preparation and
 plotting scripts, each documented in its own subdirectory. They are covered
-separately from this installation guide.
+separately from this installation guide. `pre_proc/grid_creation_scripts/prepare_ncar_mesh.sh`
+prepares an NCAR quasi-uniform mesh for the custom operators (regenerated mesh,
+operator files, partitions), and `proc/` runs benchmarks in the MPAS image
+([`proc/README.md`](proc/README.md)).
 
 ## Note to developers
 
