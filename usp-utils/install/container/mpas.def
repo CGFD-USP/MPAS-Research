@@ -3,9 +3,10 @@ From: ubuntu:24.04
 
 # MPAS build and run environment with the pre- and post-processing tools of
 # usp-utils: GNU compilers, Open MPI and PnetCDF for the model (SMIOL I/O, PIO
-# unset), NetCDF tools, the conda environment of libs/cgfd-usp-mpas.yml, the
-# shared Julia environment of install/install_julia_environment.jl (without
-# GLMakie) and TeX Live for the Copernicus class. Built by build.sh, which
+# unset), NetCDF tools, METIS (gpmetis) for the mesh partitions, the conda
+# environment of libs/cgfd-usp-mpas.yml, the shared Julia environment of
+# install/install_julia_environment.jl (without GLMakie) and TeX Live for the
+# Copernicus class. Built by build.sh, which
 # stages the environment files as the build context.
 
 %files
@@ -20,7 +21,7 @@ From: ubuntu:24.04
     apt-get install -y --no-install-recommends \
         build-essential gfortran cmake m4 file git ca-certificates curl bzip2 xz-utils \
         openmpi-bin libopenmpi-dev \
-        netcdf-bin nco \
+        netcdf-bin nco metis \
         texlive-latex-base texlive-latex-recommended texlive-latex-extra \
         texlive-fonts-recommended texlive-fonts-extra texlive-plain-generic \
         texlive-lang-other texlive-publishers texlive-science \
@@ -97,6 +98,7 @@ From: ubuntu:24.04
 %test
     gfortran --version | head -1
     mpif90 --showme:version
+    command -v gpmetis
     /opt/pnetcdf/bin/pnetcdf-config --version
     python3 -c 'import numpy, xarray, matplotlib, cartopy, mpas_tools, jigsawpy; print("python ok")'
     julia --startup-file=no --project=@cgfd-usp-mpas -e 'using NCDatasets, Comonicon; println("julia ok")'
@@ -107,6 +109,6 @@ From: ubuntu:24.04
 
 %help
     gfortran, Open MPI and PnetCDF (PNETCDF=/opt/pnetcdf) to build and run
-    MPAS with SMIOL, NetCDF tools (ncdump, NCO), the cgfd-usp-mpas Python
+    MPAS with SMIOL, NetCDF tools (ncdump, NCO), gpmetis, the cgfd-usp-mpas Python
     environment, Julia with the shared environment @cgfd-usp-mpas, and TeX
     Live with latexmk. Use it through usp-utils/install/container/run.sh.

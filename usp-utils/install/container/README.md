@@ -15,6 +15,7 @@ the model build ([`../README.md`](../README.md)) and the pre/post-processing env
 | MPI | Open MPI 4.1 (Ubuntu) | `mpif90`, `mpirun` |
 | PnetCDF | 1.14.1, built against that Open MPI | `/opt/pnetcdf`, `PNETCDF` set |
 | NetCDF tools | Ubuntu packages | `ncdump`, NCO |
+| METIS | Ubuntu package, for the mesh partitions (`graph.info.part.N`) | `gpmetis` |
 | Python | conda environment of [`../../libs/cgfd-usp-mpas.yml`](../../libs/cgfd-usp-mpas.yml) | `/opt/conda/envs/cgfd-usp-mpas`, `python3` |
 | Julia | 1.12.7, shared environment `@cgfd-usp-mpas` of [`../install_julia_environment.jl`](../install_julia_environment.jl) without GLMakie | `/opt/julia`, depot `/opt/julia-depot` |
 | LaTeX | TeX Live (Ubuntu), with the packages of the Copernicus class | `latexmk`, `pdflatex`, `bibtex` |
