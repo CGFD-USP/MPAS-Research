@@ -10,6 +10,8 @@
 #   MPAS_SCHEDULER   none or pbs
 #   MPAS_HIDE_ENV    variables hidden from the image (run.sh)
 #   MPAS_BUILD_ROOT  where build_mpas.sh writes, default ~/mpas-builds
+#   MPAS_MPI_NET     network interface of MPI between nodes (mpirun.sh), default all
+#   MPAS_SSH_KEY     ssh key accepted between the nodes of a job (mpirun.sh)
 # A new machine: copy _template.sh to <machine>.sh and add its hostnames below.
 _mpas_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if [ -z "${MPAS_MACHINE:-}" ]; then
@@ -29,3 +31,5 @@ fi
 unset _mpas_here
 export MPAS_MACHINE MPAS_ROOT APPTAINER MPAS_DATA_ROOT MPAS_BIND MPAS_NODE_CORES \
   MPAS_SCHEDULER MPAS_HIDE_ENV MPAS_BUILD_ROOT
+[ -z "${MPAS_MPI_NET:-}" ] || export MPAS_MPI_NET
+[ -z "${MPAS_SSH_KEY:-}" ] || export MPAS_SSH_KEY

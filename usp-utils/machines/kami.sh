@@ -12,3 +12,6 @@ case ":$PATH:" in
   *:/opt/pbs/bin:*) ;;
   *) [ -d /opt/pbs/bin ] && export PATH=$PATH:/opt/pbs/bin ;;
 esac
+# MPI between nodes: TCP on the 2x25 GbE bond (no InfiniBand), daemons started over ssh
+: "${MPAS_MPI_NET:=bond0}"
+: "${MPAS_SSH_KEY:=$HOME/.ssh/id_ed25519_kami}"
