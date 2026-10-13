@@ -34,8 +34,8 @@ others wait for it (at most `JW_INIT_WAIT` seconds, 3 h by default).
 
 Long runs go in segments: with `JW_SEGMENT=<D_hh:mm:ss>` (a divisor of the duration) a run writes a
 restart file at the end of each segment and starts the next segment from it, keeping only the
-latest restart file (about 100 GB at 15 km with 60 levels), and none once the run is complete
-(unless `JW_KEEP_RESTART` is set). A call of `run_jw.sh` runs the remaining
+latest restart file (about 84 GB at 15 km with 60 levels); the last segment writes none
+(`streams.atmosphere.segments` and `streams.atmosphere.last`), unless `JW_KEEP_RESTART` is set. A call of `run_jw.sh` runs the remaining
 segments, at most `JW_SEGMENTS_PER_CALL`, so a chain of identical jobs, each shorter than a day,
 makes one long run. The progress is the time of the latest restart file (`restart_timestamp`, which
 MPAS writes once the file is complete), so a call after an interrupted segment, such as a job

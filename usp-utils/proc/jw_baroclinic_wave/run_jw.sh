@@ -10,7 +10,8 @@
 # MPI launch: usp-utils/machines/mpirun.sh (one node, or the nodes of a PBS job).
 # Segments: $JW_SEGMENT (D_hh:mm:ss, default the whole duration) splits the run
 # into segments, each started from the restart file of the previous one (only
-# the latest restart file is kept, and none once the run is complete). A call runs the remaining segments, at most
+# the latest restart file is kept; the last segment writes none, unless
+# $JW_KEEP_RESTART is set). A call runs the remaining segments, at most
 # $JW_SEGMENTS_PER_CALL of them, so a long run can be a chain of shorter jobs;
 # a call on a complete run does nothing, and a call after an interrupted
 # segment repeats it.
@@ -214,11 +215,14 @@ if mkdir "$rdir" 2> /dev/null; then
   [ "$ranks" -eq 1 ] || ln -s "$part" "graph.info.part.$ranks"
   namelist false "$t0" > namelist.atmosphere.start
   namelist true file > namelist.atmosphere.restart
-  # output times count from the start of the run, also in a restarted segment
-  cat > streams.atmosphere << EOF
+  # output times count from the start of the run, also in a restarted segment;
+  # restart files every segment (streams.atmosphere.segments), none at the end
+  # of the last segment (streams.atmosphere.last)
+  streams() {
+    cat << EOF
 <streams>
 <immutable_stream name="input" type="input" filename_template="init.nc" input_interval="initial_only" />
-<immutable_stream name="restart" type="input;output" filename_template="restart.\$Y-\$M-\$D_\$h.\$m.\$s.nc" input_interval="initial_only" output_interval="$([ "$nseg" -gt 1 ] && echo "$segment" || echo none)" clobber_mode="replace_files" />
+<immutable_stream name="restart" type="input;output" filename_template="restart.\$Y-\$M-\$D_\$h.\$m.\$s.nc" input_interval="initial_only" output_interval="$1" clobber_mode="replace_files" />
 <stream name="output" type="output" filename_template="history.\$Y-\$M-\$D_\$h.\$m.\$s.nc" reference_time="$t0" output_interval="${JW_HISTORY_INTERVAL:-$duration}" clobber_mode="replace_files" >
     <file name="stream_list.atmosphere.output"/>
 </stream>
@@ -228,6 +232,13 @@ if mkdir "$rdir" 2> /dev/null; then
 <immutable_stream name="custom_operators" type="input" filename_template="custom_operators.nc" packages="custom_operators" input_interval="initial_only" />
 </streams>
 EOF
+  }
+  if [ "$nseg" -eq 1 ]; then
+    streams none > streams.atmosphere
+  else
+    streams "$segment" > streams.atmosphere.segments
+    streams "$([ -n "${JW_KEEP_RESTART:-}" ] && echo "$segment" || echo none)" > streams.atmosphere.last
+  fi
   printf '%s\n' xtime w theta rho pressure uReconstructZonal uReconstructMeridional \
     > stream_list.atmosphere.output
   printf '%s\n' xtime mslp vorticity_850hPa uzonal_850hPa umeridional_850hPa temperature_850hPa \
@@ -266,7 +277,10 @@ while [ "$done_segments" -lt "$nseg" ] && [ "$calls" -lt "${JW_SEGMENTS_PER_CALL
     [ -f restart_timestamp ] || { echo "no restart_timestamp in $rdir for segment $k" >&2; exit 1; }
     prelude="cp namelist.atmosphere.restart namelist.atmosphere"
   fi
-  $prelude
+  if [ "$nseg" -gt 1 ]; then
+    prelude="$prelude && cp streams.atmosphere.$([ "$k" -lt "$nseg" ] && echo segments || echo last) streams.atmosphere"
+  fi
+  eval "$prelude"
   echo "run $mesh $case L$levels $config np$ranks, segment $k of $nseg"
   launch "$ranks" "$MPAS_BUILD/atmosphere_model"
   [ "$nseg" -eq 1 ] || cp log.atmosphere.0000.out "log.atmosphere.0000.seg$k.out"
@@ -275,7 +289,7 @@ while [ "$done_segments" -lt "$nseg" ] && [ "$calls" -lt "${JW_SEGMENTS_PER_CALL
     echo "run failed, see $rdir" >&2
     exit 1
   fi
-  if [ "$nseg" -gt 1 ]; then
+  if [ "$k" -lt "$nseg" ]; then
     [ "$(progress)" -eq "$k" ] || { echo "restart_timestamp does not match segment $k in $rdir" >&2; exit 1; }
     latest="restart.$(tr -d ' ' < restart_timestamp | tr : .).nc"
     for f in restart.*.nc; do
@@ -283,7 +297,7 @@ while [ "$done_segments" -lt "$nseg" ] && [ "$calls" -lt "${JW_SEGMENTS_PER_CALL
     done
   fi
   until=the\ end
-  [ ! -f restart_timestamp ] || until=$(tr -d ' ' < restart_timestamp)
+  [ "$k" -eq "$nseg" ] || until=$(tr -d ' ' < restart_timestamp)
   echo "segment    $k of $nseg ok, until $until" >> RUN_INFO
   done_segments=$k
   calls=$((calls + 1))
