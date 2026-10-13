@@ -16,8 +16,12 @@ root = sys.argv[1]
 
 
 def info(rdir):
+    """RUN_INFO as a dict (last value of each key), with the wall times of all segments summed."""
     lines = open(os.path.join(rdir, "RUN_INFO")).read().splitlines()
-    return {l[:11].strip(): l[11:].strip() for l in lines}
+    d = {l[:11].strip(): l[11:].strip() for l in lines}
+    walls = [int(l[11:].split()[0]) for l in lines if l.startswith("wall")]
+    d["wall"] = f"{sum(walls)} s"
+    return d
 
 
 def final(rdir, prefix):

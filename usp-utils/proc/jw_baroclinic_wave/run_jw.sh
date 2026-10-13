@@ -7,10 +7,14 @@
 # NCAR grid (trsk only). Settings and configurations: common.sh.
 # Output: 2D diagnostics every $JW_DIAG_INTERVAL (default 1 day), 3D history
 # every $JW_HISTORY_INTERVAL (default the run duration: initial and final state).
-# mpirun options: $MPAS_MPIRUN_OPTS, default one node through shared memory only
-# (the TCP transport of the image fails above about 24 ranks) and no binding
-# (nodes shared with other jobs).
-# Each folder gets RUN_INFO, whose "rerun" line repeats the run by hand.
+# MPI launch: usp-utils/machines/mpirun.sh (one node, or the nodes of a PBS job).
+# Segments: $JW_SEGMENT (D_hh:mm:ss, default the whole duration) splits the run
+# into segments, each started from the restart file of the previous one (only
+# the latest restart file is kept, and none once the run is complete). A call runs the remaining segments, at most
+# $JW_SEGMENTS_PER_CALL of them, so a long run can be a chain of shorter jobs;
+# a call on a complete run does nothing, and a call after an interrupted
+# segment repeats it.
+# Each folder gets RUN_INFO, whose "rerun" lines repeat the run by hand.
 # Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady> <levels> <config> <ranks> <duration>
 #   e.g. bash run_jw.sh $MPAS_DATA_ROOT/jw x1.40962 wave 60 consistent 48 15_00:00:00
 set -eu
@@ -37,6 +41,8 @@ else
   [ "$opfile" = none ] || { echo "operator files belong to the regenerated mesh, not $mesh" >&2; exit 1; }
   grid=$gdir/$base.grid.nc
   part=$gdir/$base.graph.info.part.$ranks
+  # the regenerated mesh has the cells and neighbours of the NCAR grid
+  [ -f "$part" ] || part=$gdir/$base.grid.regen.graph.info.part.$ranks
 fi
 [ -f "$grid" ] || { echo "no $grid, run prepare_ncar_mesh.sh $base" >&2; exit 1; }
 [ "$ranks" -eq 1 ] || [ -f "$part" ] || { echo "no partition for $ranks ranks, run prepare_ncar_mesh.sh $base $ranks" >&2; exit 1; }
@@ -44,12 +50,39 @@ fi
 cdir=$root/$mesh/${case}_L$levels
 idir=$cdir/init
 rdir=$cdir/${config}_np$ranks
-[ ! -e "$rdir" ] || { echo "$rdir exists" >&2; exit 1; }
+# duration in seconds of D_hh:mm:ss
+seconds() {
+  local d=0 t=$1 h m sec
+  [[ $1 == *_* ]] && d=${1%%_*} t=${1#*_}
+  IFS=: read -r h m sec <<< "$t"
+  echo $((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$sec))
+}
+# seconds from 0000-01-01_00:00:00 to a time of year 0000 (a leap year in MPAS's
+# gregorian calendar), as written in restart_timestamp
+stamp_seconds() {
+  [[ $1 =~ ^0000-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] || { echo "unexpected time $1" >&2; return 1; }
+  awk -F'[-_:]' '{
+    split("31 29 31 30 31 30 31 31 30 31 30 31", days, " ")
+    d = $3 - 1
+    for (i = 1; i < $2; i++) d += days[i]
+    print ((d * 24 + $4) * 60 + $5) * 60 + $6
+  }' <<< "$1"
+}
+segment=${JW_SEGMENT:-$duration}
+nseg=$(($(seconds "$duration") / $(seconds "$segment")))
+[ $((nseg * $(seconds "$segment"))) -eq "$(seconds "$duration")" ] ||
+  { echo "the duration $duration is not a multiple of the segment $segment" >&2; exit 1; }
+if [ -f "$rdir/RUN_INFO" ]; then
+  grep -q '^status *ok' "$rdir/RUN_INFO" && { echo "$rdir is complete"; exit 0; }
+  grep -q '^status *failed' "$rdir/RUN_INFO" && { echo "$rdir failed, see its logs" >&2; exit 1; }
+fi
 mpas_ok() { grep -q 'Finished running the' "$1" && ! grep -q 'CRITICAL ERROR' "$1"; }
 # runs an MPAS executable on $1 ranks in the current folder, recorded in RUN_INFO
+# (after the command in $prelude, if any)
+prelude=
 launch() {
-  local cmd="bash $JW_RUN mpirun ${MPAS_MPIRUN_OPTS:---bind-to none --mca btl self,vader} -n $1 $2"
-  echo "rerun      source $MPAS_ROOT/usp-utils/machines/env.sh && cd $PWD && MPAS_BIND=$MPAS_BIND $cmd > run.log 2>&1" >> RUN_INFO
+  local cmd="bash $MPAS_ROOT/usp-utils/machines/mpirun.sh $1 $2"
+  echo "rerun      source $MPAS_ROOT/usp-utils/machines/env.sh && cd $PWD && ${prelude:+$prelude && }MPAS_BIND=$MPAS_BIND $cmd > run.log 2>&1" >> RUN_INFO
   echo "host       $(hostname -s), start $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> RUN_INFO
   local t0
   t0=$(date +%s)
@@ -57,9 +90,10 @@ launch() {
   echo "wall       $(($(date +%s) - t0)) s" >> RUN_INFO
 }
 
-if [ ! -f "$idir/init.nc" ]; then
-  [ ! -e "$idir" ] || { echo "$idir holds a failed init, remove it" >&2; exit 1; }
-  mkdir -p "$idir"
+# the first run of a case makes its initial state (mkdir is atomic), and runs
+# started meanwhile wait for its status, at most $JW_INIT_WAIT seconds (default 3 h)
+mkdir -p "$cdir"
+if mkdir "$idir" 2> /dev/null; then
   cd "$idir"
   ln -s "$grid" grid.nc
   cat > namelist.init_atmosphere << EOF
@@ -97,18 +131,23 @@ EOF
     echo "init failed, see $idir" >&2
     exit 1
   fi
+else
+  waited=0
+  until grep -q '^status' "$idir/RUN_INFO" 2> /dev/null; do
+    [ "$waited" -lt "${JW_INIT_WAIT:-10800}" ] || { echo "no initial state in $idir after $waited s" >&2; exit 1; }
+    sleep 30
+    waited=$((waited + 30))
+  done
+  grep -q '^status *ok' "$idir/RUN_INFO" || { echo "$idir holds a failed init, remove it" >&2; exit 1; }
 fi
 
-mkdir -p "$rdir"
-cd "$rdir"
-ln -s ../init/init.nc init.nc
-[ "$opfile" = none ] || ln -s "$gdir/$opfile" custom_operators.nc
-[ "$ranks" -eq 1 ] || ln -s "$part" "graph.info.part.$ranks"
-cat > namelist.atmosphere << EOF
+# namelist.atmosphere.<start|restart>: the first segment, and the next ones
+namelist() {
+  cat << EOF
 &nhyd_model
     config_dt = $dt
-    config_start_time = '0000-01-01_00:00:00'
-    config_run_duration = '$duration'
+    config_start_time = '$2'
+    config_run_duration = '$segment'
     config_split_dynamics_transport = false
     config_number_of_sub_steps = 6
     config_dynamics_split_steps = 1
@@ -151,7 +190,7 @@ cat > namelist.atmosphere << EOF
     config_block_decomp_file_prefix = 'graph.info.part.'
 /
 &restart
-    config_do_restart = false
+    config_do_restart = $1
 /
 &printout
     config_print_global_minmax_vel = true
@@ -165,38 +204,92 @@ cat > namelist.atmosphere << EOF
     config_physics_suite = 'none'
 /
 EOF
-cat > streams.atmosphere << EOF
+}
+
+t0=0000-01-01_00:00:00
+if mkdir "$rdir" 2> /dev/null; then
+  cd "$rdir"
+  ln -s ../init/init.nc init.nc
+  [ "$opfile" = none ] || ln -s "$gdir/$opfile" custom_operators.nc
+  [ "$ranks" -eq 1 ] || ln -s "$part" "graph.info.part.$ranks"
+  namelist false "$t0" > namelist.atmosphere.start
+  namelist true file > namelist.atmosphere.restart
+  # output times count from the start of the run, also in a restarted segment
+  cat > streams.atmosphere << EOF
 <streams>
 <immutable_stream name="input" type="input" filename_template="init.nc" input_interval="initial_only" />
-<immutable_stream name="restart" type="input;output" filename_template="restart.\$Y-\$M-\$D_\$h.\$m.\$s.nc" input_interval="initial_only" output_interval="none" />
-<stream name="output" type="output" filename_template="history.\$Y-\$M-\$D_\$h.\$m.\$s.nc" output_interval="${JW_HISTORY_INTERVAL:-$duration}" >
+<immutable_stream name="restart" type="input;output" filename_template="restart.\$Y-\$M-\$D_\$h.\$m.\$s.nc" input_interval="initial_only" output_interval="$([ "$nseg" -gt 1 ] && echo "$segment" || echo none)" clobber_mode="replace_files" />
+<stream name="output" type="output" filename_template="history.\$Y-\$M-\$D_\$h.\$m.\$s.nc" reference_time="$t0" output_interval="${JW_HISTORY_INTERVAL:-$duration}" clobber_mode="replace_files" >
     <file name="stream_list.atmosphere.output"/>
 </stream>
-<stream name="diagnostics" type="output" filename_template="diag.\$Y-\$M-\$D_\$h.\$m.\$s.nc" output_interval="${JW_DIAG_INTERVAL:-1_00:00:00}" >
+<stream name="diagnostics" type="output" filename_template="diag.\$Y-\$M-\$D_\$h.\$m.\$s.nc" reference_time="$t0" output_interval="${JW_DIAG_INTERVAL:-1_00:00:00}" clobber_mode="replace_files" >
     <file name="stream_list.atmosphere.diagnostics"/>
 </stream>
 <immutable_stream name="custom_operators" type="input" filename_template="custom_operators.nc" packages="custom_operators" input_interval="initial_only" />
 </streams>
 EOF
-printf '%s\n' xtime w theta rho pressure uReconstructZonal uReconstructMeridional \
-  > stream_list.atmosphere.output
-printf '%s\n' xtime mslp vorticity_850hPa uzonal_850hPa umeridional_850hPa temperature_850hPa \
-  height_500hPa uzonal_surface umeridional_surface > stream_list.atmosphere.diagnostics
-
-{
-  echo "run        $mesh $case L$levels $config, $ranks ranks, $duration, dt $dt s"
-  echo "grid       $grid"
-  echo "operators  $([ "$opfile" = none ] && echo none || echo "$gdir/$opfile")"
-  echo "partition  $([ "$ranks" -eq 1 ] && echo none || echo "$part")"
-  echo "build      $MPAS_BUILD"
-  grep '^md5 .*atmosphere_model$' "$MPAS_BUILD/BUILD_INFO" | grep -v init_ | sed 's/^md5 */binary     /'
-} > RUN_INFO
-echo "run $mesh $case L$levels $config np$ranks"
-launch "$ranks" "$MPAS_BUILD/atmosphere_model"
-if mpas_ok log.atmosphere.0000.out; then
-  echo "status     ok" >> RUN_INFO
+  printf '%s\n' xtime w theta rho pressure uReconstructZonal uReconstructMeridional \
+    > stream_list.atmosphere.output
+  printf '%s\n' xtime mslp vorticity_850hPa uzonal_850hPa umeridional_850hPa temperature_850hPa \
+    height_500hPa uzonal_surface umeridional_surface > stream_list.atmosphere.diagnostics
+  {
+    echo "run        $mesh $case L$levels $config, $ranks ranks, $duration, dt $dt s"
+    echo "segments   $nseg of $segment"
+    echo "grid       $grid"
+    echo "operators  $([ "$opfile" = none ] && echo none || echo "$gdir/$opfile")"
+    echo "partition  $([ "$ranks" -eq 1 ] && echo none || echo "$part")"
+    echo "build      $MPAS_BUILD"
+    grep '^md5 .*atmosphere_model$' "$MPAS_BUILD/BUILD_INFO" | grep -v init_ | sed 's/^md5 */binary     /'
+  } > RUN_INFO
 else
-  echo "status     failed" >> RUN_INFO
-  echo "run failed, see $rdir" >&2
-  exit 1
+  cd "$rdir"
+fi
+
+# segments done: the time of the latest restart file, which MPAS records in
+# restart_timestamp only once the file is complete
+progress() {
+  local t
+  if [ "$nseg" -gt 1 ] && [ -f restart_timestamp ]; then
+    t=$(stamp_seconds "$(tr -d ' ' < restart_timestamp)") || return 1
+    echo $((t / $(seconds "$segment")))
+  else
+    echo 0
+  fi
+}
+done_segments=$(progress)
+calls=0
+while [ "$done_segments" -lt "$nseg" ] && [ "$calls" -lt "${JW_SEGMENTS_PER_CALL:-$nseg}" ]; do
+  k=$((done_segments + 1))
+  if [ "$done_segments" -eq 0 ]; then
+    prelude="cp namelist.atmosphere.start namelist.atmosphere"
+  else
+    [ -f restart_timestamp ] || { echo "no restart_timestamp in $rdir for segment $k" >&2; exit 1; }
+    prelude="cp namelist.atmosphere.restart namelist.atmosphere"
+  fi
+  $prelude
+  echo "run $mesh $case L$levels $config np$ranks, segment $k of $nseg"
+  launch "$ranks" "$MPAS_BUILD/atmosphere_model"
+  [ "$nseg" -eq 1 ] || cp log.atmosphere.0000.out "log.atmosphere.0000.seg$k.out"
+  if ! mpas_ok log.atmosphere.0000.out; then
+    echo "status     failed in segment $k of $nseg" >> RUN_INFO
+    echo "run failed, see $rdir" >&2
+    exit 1
+  fi
+  if [ "$nseg" -gt 1 ]; then
+    [ "$(progress)" -eq "$k" ] || { echo "restart_timestamp does not match segment $k in $rdir" >&2; exit 1; }
+    latest="restart.$(tr -d ' ' < restart_timestamp | tr : .).nc"
+    for f in restart.*.nc; do
+      [ "$f" = "$latest" ] || rm -f "$f"
+    done
+  fi
+  until=the\ end
+  [ ! -f restart_timestamp ] || until=$(tr -d ' ' < restart_timestamp)
+  echo "segment    $k of $nseg ok, until $until" >> RUN_INFO
+  done_segments=$k
+  calls=$((calls + 1))
+done
+if [ "$done_segments" -eq "$nseg" ]; then
+  # a complete run keeps no restart file, unless $JW_KEEP_RESTART is set
+  [ -n "${JW_KEEP_RESTART:-}" ] || rm -f restart.*.nc
+  echo "status     ok" >> RUN_INFO
 fi

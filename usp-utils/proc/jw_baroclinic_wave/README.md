@@ -29,6 +29,21 @@ bash usp-utils/install/container/run.sh python3 usp-utils/proc/jw_baroclinic_wav
 ```
 
 On a cluster, the same commands go through `usp-utils/machines/submit.sh <cores> <log> ...`.
+Runs of one case may start together (in separate jobs): the first makes the initial state, and the
+others wait for it (at most `JW_INIT_WAIT` seconds, 3 h by default).
+
+Long runs go in segments: with `JW_SEGMENT=<D_hh:mm:ss>` (a divisor of the duration) a run writes a
+restart file at the end of each segment and starts the next segment from it, keeping only the
+latest restart file (about 100 GB at 15 km with 60 levels), and none once the run is complete
+(unless `JW_KEEP_RESTART` is set). A call of `run_jw.sh` runs the remaining
+segments, at most `JW_SEGMENTS_PER_CALL`, so a chain of identical jobs, each shorter than a day,
+makes one long run. The progress is the time of the latest restart file (`restart_timestamp`, which
+MPAS writes once the file is complete), so a call after an interrupted segment, such as a job
+requeued after a node failure, repeats that segment. A call on a complete run does nothing, and a
+call on a failed run stops. Segmented and interrupted runs give the same bits as one continuous run.
+
+The MPI launch is `usp-utils/machines/mpirun.sh`: on one node, or across the nodes of a PBS job when
+the ranks need more than one node.
 
 Layout:
 
@@ -37,7 +52,8 @@ $MPAS_GRIDS/<mesh>/              NCAR grid and partitions, <mesh>.grid.regen.nc 
                                  operators-consistent.nc, operators-lsq2.nc, PROVENANCE
 <root>/<mesh>[-ncar]/<case>_L<levels>/
     init/                        init.nc of init_atmosphere (1 rank), RUN_INFO
-    <config>_np<ranks>/          namelists, streams, history.*.nc, diag.*.nc, logs, RUN_INFO
+    <config>_np<ranks>/          namelists (.start, .restart), streams, history.*.nc, diag.*.nc, logs
+                                 (one per segment), the latest restart file, RUN_INFO
 ```
 
 ## Configurations
@@ -72,5 +88,8 @@ $MPAS_GRIDS/<mesh>/              NCAR grid and partitions, <mesh>.grid.regen.nc 
 - Surface pressure: `surface_pressure` is computed by the physics only, so `check_runs.py`
   derives it from the two lowest levels with the formula of the physics interface (a few hPa
   above the exact value with 26 levels, so only differences between runs are meaningful).
-- MPI: one node through shared memory (`--mca btl self,vader`), since the image's TCP transport
-  fails above about 24 ranks on nemesis. `MPAS_MPIRUN_OPTS` replaces the options.
+- MPI: `usp-utils/machines/mpirun.sh`, ranks bound to cores inside PBS jobs, TCP on high ports.
+  `MPAS_MPIRUN_OPTS` adds options.
+- Output streams count their times from the start of the run (`reference_time`), so a restarted
+  segment keeps the daily diagnostics and the final 3D output, and they replace a file left by an
+  interrupted segment (`clobber_mode="replace_files"`).
