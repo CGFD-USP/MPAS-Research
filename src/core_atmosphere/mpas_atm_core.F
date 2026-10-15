@@ -1678,7 +1678,7 @@ module atm_core
 
       real (kind=RKIND), dimension(:,:), pointer :: deformation_coef_c2, deformation_coef_s2, deformation_coef_cs
       real (kind=RKIND), dimension(:,:), pointer :: deformation_coef_c, deformation_coef_s
-      integer, dimension(:,:), pointer :: cellsOnEdge, edgesOnCell, cellsOnCell, verticesOnCell
+      integer, dimension(:,:), pointer :: cellsOnEdge, edgesOnCell, cellsOnCell, verticesOnCell, verticesOnEdge
       integer, dimension(:), pointer :: nEdgesOnCell
       real (kind=RKIND), dimension(:), pointer :: xCell, yCell, zCell
       real (kind=RKIND), dimension(:), pointer :: xVertex, yVertex, zVertex
@@ -1689,7 +1689,7 @@ module atm_core
       real (kind=RKIND), dimension(25) :: xc, yc, zc ! cell center coordinates
       real (kind=RKIND), dimension(25) :: thetav, thetat, dl_sphere
       real (kind=RKIND) :: dl
-      integer :: i, ip1, ip2, n
+      integer :: i, ip1, ip2, j, jp1, n
       integer :: iCell
       real (kind=RKIND) :: pii
       real (kind=RKIND), dimension(25) :: xp, yp
@@ -1717,6 +1717,7 @@ module atm_core
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(mesh, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(mesh, 'verticesOnCell', verticesOnCell)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
       call mpas_pool_get_array(mesh, 'xCell', xCell)
       call mpas_pool_get_array(mesh, 'yCell', yCell)
       call mpas_pool_get_array(mesh, 'zCell', zCell)
@@ -1861,19 +1862,26 @@ module atm_core
          end do
 
          ! coefficients - see documentation for the formulas.
+         ! edgesOnCell(i) gets those of side j of the polygon (vertices j and j+1),
+         ! the side it joins, whatever the order of edgesOnCell against verticesOnCell.
 
          do i=1,n-1
-            ip1 = i+1
-            if (ip1 == n) ip1 = 1
-            dl = sqrt((xp(ip1)-xp(i))**2 + (yp(ip1)-yp(i))**2)
-            sint2 = (sin(thetat(i)))**2
-            cost2 = (cos(thetat(i)))**2
-            sint_cost = sin(thetat(i))*cos(thetat(i))
+            ie = edgesOnCell(i,iCell)
+            do j=1,n-1
+               jp1 = j+1
+               if (jp1 == n) jp1 = 1
+               if (any(verticesOnEdge(:,ie) == verticesOnCell(j,iCell)) .and. &
+                   any(verticesOnEdge(:,ie) == verticesOnCell(jp1,iCell))) exit
+            end do
+            dl = sqrt((xp(jp1)-xp(j))**2 + (yp(jp1)-yp(j))**2)
+            sint2 = (sin(thetat(j)))**2
+            cost2 = (cos(thetat(j)))**2
+            sint_cost = sin(thetat(j))*cos(thetat(j))
             deformation_coef_c2(i,iCell) = dl*cost2/area_cell
             deformation_coef_s2(i,iCell) = dl*sint2/area_cell
             deformation_coef_cs(i,iCell) = dl*sint_cost/area_cell
-            deformation_coef_c(i,iCell) = dl*cos(thetat(i))/area_cell
-            deformation_coef_s(i,iCell) = dl*sin(thetat(i))/area_cell
+            deformation_coef_c(i,iCell) = dl*cos(thetat(j))/area_cell
+            deformation_coef_s(i,iCell) = dl*sin(thetat(j))/area_cell
             if (cellsOnEdge(1,EdgesOnCell(i,iCell)) /= iCell) then
                deformation_coef_c2(i,iCell) = - deformation_coef_c2(i,iCell)
                deformation_coef_s2(i,iCell) = - deformation_coef_s2(i,iCell)
