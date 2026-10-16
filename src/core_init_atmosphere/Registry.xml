@@ -66,8 +66,9 @@
                                         8 = surface field (SST, sea-ice) update file for use with real-data simulations \newline
                                         9 = lateral boundary conditions update file for use with real-data simulations \newline
                                         10 = idealized LES case \newline
+                                        11 = isothermal solid-body zonal flow, steady state \newline
                                         13 = CAM-MPAS 3-d grid with specified topography and zeta levels"
-                     possible_values="1 -- 10, or 13"/>
+                     possible_values="1 -- 11, or 13"/>
 
                 <nml_option name="config_calendar_type" type="character" default_value="gregorian" in_defaults="false"
                      units="-"
