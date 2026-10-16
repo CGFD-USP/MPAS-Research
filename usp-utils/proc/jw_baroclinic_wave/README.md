@@ -42,6 +42,10 @@ MPAS writes once the file is complete), so a call after an interrupted segment, 
 requeued after a node failure, repeats that segment. A call on a complete run does nothing, and a
 call on a failed run stops. Segmented and interrupted runs give the same bits as one continuous run.
 
+Other test cases run through `run_jw.sh` with environment variables for the init case, the time
+step, the horizontal mixing, the divergence damping and the output fields (its header), as
+[`../zonal_steady`](../zonal_steady) does. Unset, they keep the settings above.
+
 The MPI launch is `usp-utils/machines/mpirun.sh`: on one node, or across the nodes of a PBS job when
 the ranks need more than one node.
 

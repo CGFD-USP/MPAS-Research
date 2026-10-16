@@ -16,6 +16,12 @@
 # a call on a complete run does nothing, and a call after an interrupted
 # segment repeats it.
 # Each folder gets RUN_INFO, whose "rerun" lines repeat the run by hand.
+# Other test cases (e.g. ../zonal_steady): a <case> other than wave and steady
+# takes its config_init_case from $JW_INIT_CASE, and $JW_INIT_EXTRA (namelist
+# groups) is appended to namelist.init_atmosphere. $JW_DT (s) replaces the time
+# step, $JW_HORIZ_MIXING the horizontal mixing (default 2d_smagorinsky),
+# $JW_SMDIV the divergence damping (default 0.1), and $JW_HISTORY_FIELDS and
+# $JW_DIAG_FIELDS the fields of the two output streams.
 # Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady> <levels> <config> <ranks> <duration>
 #   e.g. bash run_jw.sh $MPAS_DATA_ROOT/jw x1.40962 wave 60 consistent 48 15_00:00:00
 set -eu
@@ -25,13 +31,16 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$1 mesh=$2 case=$3 levels=$4 config=$5 ranks=$6 duration=$7
 base=${mesh%-ncar}
 dx=$(jw_dx_km "$base")
-dt=$(jw_dt "$base")
+dt=${JW_DT:-$(jw_dt "$base")}
 cfg=$(jw_config "$config")
 read -r opfile weights coeffs ke vke <<< "$cfg"
 case $case in
   wave) init_case=2 ;;
   steady) init_case=1 ;;
-  *) echo "case is wave or steady, not $case" >&2; exit 1 ;;
+  *)
+    [ -n "${JW_INIT_CASE:-}" ] || { echo "case is wave or steady, or set JW_INIT_CASE for $case" >&2; exit 1; }
+    init_case=$JW_INIT_CASE
+    ;;
 esac
 gdir=$MPAS_GRIDS/$base
 if [ "$mesh" = "$base" ]; then
@@ -109,6 +118,7 @@ if mkdir "$idir" 2> /dev/null; then
     config_block_decomp_file_prefix = 'graph.info.part.'
 /
 EOF
+  [ -z "${JW_INIT_EXTRA:-}" ] || echo "$JW_INIT_EXTRA" >> namelist.init_atmosphere
   cat > streams.init_atmosphere << 'EOF'
 <streams>
 <immutable_stream name="input" type="input" filename_template="grid.nc" input_interval="initial_only" />
@@ -158,7 +168,7 @@ namelist() {
     config_h_theta_eddy_visc2 = 0.0
     config_h_theta_eddy_visc4 = 0.0
     config_v_theta_eddy_visc2 = 0.0
-    config_horiz_mixing = '2d_smagorinsky'
+    config_horiz_mixing = '${JW_HORIZ_MIXING:-2d_smagorinsky}'
     config_len_disp = $(awk -v dx="$dx" 'BEGIN { print dx * 1000 }')
     config_u_vadv_order = 3
     config_w_vadv_order = 3
@@ -170,7 +180,7 @@ namelist() {
     config_positive_definite = false
     config_coef_3rd_order = 1.0
     config_monotonic = false
-    config_smdiv = 0.1
+    config_smdiv = ${JW_SMDIV:-0.1}
     config_use_custom_weightsOnEdge = $weights
     config_use_custom_coeffs_reconstruct = $coeffs
     config_ke_use_reconstructed_vel = $ke
@@ -239,10 +249,10 @@ EOF
     streams "$segment" > streams.atmosphere.segments
     streams "$([ -n "${JW_KEEP_RESTART:-}" ] && echo "$segment" || echo none)" > streams.atmosphere.last
   fi
-  printf '%s\n' xtime w theta rho pressure uReconstructZonal uReconstructMeridional \
+  printf '%s\n' ${JW_HISTORY_FIELDS:-xtime w theta rho pressure uReconstructZonal uReconstructMeridional} \
     > stream_list.atmosphere.output
-  printf '%s\n' xtime mslp vorticity_850hPa uzonal_850hPa umeridional_850hPa temperature_850hPa \
-    height_500hPa uzonal_surface umeridional_surface > stream_list.atmosphere.diagnostics
+  printf '%s\n' ${JW_DIAG_FIELDS:-xtime mslp vorticity_850hPa uzonal_850hPa umeridional_850hPa \
+    temperature_850hPa height_500hPa uzonal_surface umeridional_surface} > stream_list.atmosphere.diagnostics
   {
     echo "run        $mesh $case L$levels $config, $ranks ranks, $duration, dt $dt s"
     echo "segments   $nseg of $segment"
