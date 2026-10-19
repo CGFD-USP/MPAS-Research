@@ -10,7 +10,7 @@ length proportional to the cell spacing.
 | file | does |
 |---|---|
 | `common.sh` | settings: build, meshes, spacing and time step of a mesh, configurations with their operator file and options |
-| `run_jw.sh <root> <mesh>[-ncar] <wave\|steady> <levels> <config> <ranks> <duration>` | makes the initial state once per mesh, case and level count (`init/`), then sets up and runs one configuration (`<config>_np<ranks>/`) |
+| `run_jw.sh <root> <mesh>[-ncar] <wave\|steady\|wave-flat\|steady-flat> <levels> <config> <ranks> <duration>` | makes the initial state once per mesh, case and level count (`init/`), then sets up and runs one configuration (`<config>_np<ranks>/`) |
 | `check_runs.py <root>` | status, cost, whether the operator file was read, final ranges, and differences of cell fields between runs (each configuration against `trsk`, 1 rank against more ranks, the NCAR grid against the regenerated one, the steady state against its initial state) |
 | `smoke.sh [root]` | smoke test on the 480 km mesh, 1 day per run, about 1 min on 4 cores |
 
@@ -45,6 +45,12 @@ call on a failed run stops. Segmented and interrupted runs give the same bits as
 Other test cases run through `run_jw.sh` with environment variables for the init case, the time
 step, the horizontal mixing, the divergence damping and the output fields (its header), as
 [`../zonal_steady`](../zonal_steady) does. Unset, they keep the settings above.
+
+Flat surface (opt-in): the cases `steady-flat` and `wave-flat` (`config_init_case = 17` and `18`, and 19 for the
+normal-mode perturbation) use the JW fields over a flat surface at z = 0, with the surface pressure
+p0 eta_s(lat) at which the JW geopotential vanishes, instead of the JW terrain. The existing cases
+`steady` and `wave` are unchanged. The flat-surface results are not directly comparable with published JW
+and HIWPP numbers, since the base state, the surface pressure and the reference solution differ.
 
 The MPI launch is `usp-utils/machines/mpirun.sh`: on one node, or across the nodes of a PBS job when
 the ranks need more than one node.
