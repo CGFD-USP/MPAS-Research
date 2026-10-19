@@ -99,12 +99,13 @@ module init_atm_cases
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_init_case', config_init_case)
 
-      if ((config_init_case == 1) .or. (config_init_case == 2) .or. (config_init_case == 3)) then
+      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 17 .and. config_init_case <= 19)) then
 
          call mpas_log_write(' Jablonowski and Williamson baroclinic wave test case ')
-         if (config_init_case == 1) call mpas_log_write(' no initial perturbation ')
-         if (config_init_case == 2) call mpas_log_write(' initial perturbation included ')
-         if (config_init_case == 3) call mpas_log_write(' normal-mode perturbation included ')
+         if (config_init_case == 1 .or. config_init_case == 17) call mpas_log_write(' no initial perturbation ')
+         if (config_init_case == 2 .or. config_init_case == 18) call mpas_log_write(' initial perturbation included ')
+         if (config_init_case == 3 .or. config_init_case == 19) call mpas_log_write(' normal-mode perturbation included ')
+         if (config_init_case >= 17) call mpas_log_write(' flat surface ')
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
 
@@ -119,7 +120,7 @@ module init_atm_cases
             call mpas_pool_get_dimension(block_ptr % dimensions, 'nVertLevels', nVertLevels)
 
             call mpas_log_write(' calling test case setup ')
-            call init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, block_ptr % configs)
+            call init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, block_ptr % configs, config_init_case >= 17)
             call decouple_variables(mesh, nCells, nVertLevels, state, diag)
             call mpas_log_write(' returned from test case setup ')
             block_ptr => block_ptr % next
@@ -447,7 +448,7 @@ module init_atm_cases
 
       !initialization of surface input variables technically not needed to run our current set of
       !idealized test cases:
-      if (config_init_case < 7 .or. config_init_case == 11)  then
+      if (config_init_case < 7 .or. config_init_case == 11 .or. (config_init_case >= 17 .and. config_init_case <= 19))  then
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
             call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
@@ -463,7 +464,7 @@ module init_atm_cases
 
 !----------------------------------------------------------------------------------------------------------
 
-   subroutine init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, configs)
+   subroutine init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, configs, flat_surface)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Setup baroclinic wave test case from Jablonowski and Williamson 2008 (QJRMS)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -541,7 +542,7 @@ module init_atm_cases
       real (kind=RKIND), dimension(nVertLevels, nlat) :: p_2d, pb_2d, ppb_2d, rr_2d, rb_2d, tb_2d, rtb_2d
       real (kind=RKIND), dimension(nVertLevels, nlat-1) :: zx_2d 
       real (kind=RKIND), dimension(nlat) :: lat_2d
-      real (kind=RKIND) :: dlat, hx_1d
+      real (kind=RKIND) :: dlat, hx_1d, psurf_jw
       real (kind=RKIND) :: z_edge, z_edge3, d2fdx2_cell1, d2fdx2_cell2
 
 !      logical, parameter :: moisture = .true.
@@ -562,10 +563,14 @@ module init_atm_cases
       real (kind=RKIND), pointer :: config_coef_3rd_order
       integer, pointer :: config_theta_adv_order
       integer, pointer :: config_init_case
+      logical, intent(in) :: flat_surface
+      integer :: jw_case
 
       character (len=StrKIND), pointer :: config_interface_projection
 
       call mpas_pool_get_config(configs, 'config_init_case', config_init_case)
+      jw_case = config_init_case
+      if (flat_surface) jw_case = config_init_case - 16
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', config_coef_3rd_order)
       call mpas_pool_get_config(configs, 'config_theta_adv_order', config_theta_adv_order)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
@@ -716,6 +721,8 @@ module init_atm_cases
       zt = 45000.
       dz = zt/float(nz1)
 
+      if (flat_surface) hx(:,:) = 0.0
+
       call mpas_log_write(' hx computation complete ')
 
       do k=1,nz
@@ -839,6 +846,11 @@ module init_atm_cases
                          *(u0)*cos(etavs)**1.5                          &
                     +(1.6*cos(phi)**3                                   &
                          *(sin(phi)**2+2./3.)-pii/4.)*r_earth*omega_e)
+        psurf_jw = p0
+        if (flat_surface) then
+          hx_1d = 0.0
+          psurf_jw = p0*jw_etas(phi, u0, t0, dtdz, r_earth, omega_e)
+        end if
 
         do k=1,nz
           zgrid_2d(k,i) = (1.-ah(k))*(sh(k)*(zt-hx_1d)+hx_1d)  &
@@ -900,7 +912,7 @@ module init_atm_cases
               rr_2d(k,i)  = (pp_2d(k,i)/(rgas*zz_2d(k,i)) - rb_2d(k,i)*(tt(k)-t0b))/tt(k)
             end do
 
-            ppi(1) = p0-.5*dzw(1)*gravity                            &
+            ppi(1) = psurf_jw-.5*dzw(1)*gravity                      &
                           *(1.25*(rr_2d(1,i)+rb_2d(1,i))*(1.+qv_2d(1,i))   &
                             -.25*(rr_2d(2,i)+rb_2d(2,i))*(1.+qv_2d(2,i)))
 
@@ -950,6 +962,8 @@ module init_atm_cases
 !     reference sounding based on dry isothermal atmosphere
 !
       do i=1, nCells
+        psurf_jw = p0
+        if (flat_surface) psurf_jw = p0*jw_etas(latCell(i), u0, t0, dtdz, r_earth, omega_e)
         do k=1,nz1
           ztemp    = .5*(zgrid(k+1,i)+zgrid(k,i))
           ppb(k,i) = p0*exp(-gravity*ztemp/(rgas*t0b)) 
@@ -1028,7 +1042,7 @@ module init_atm_cases
               rr(k,i)  = (pp(k,i)/(rgas*zz(k,i)) - rb(k,i)*(tt(k)-t0b))/tt(k)
             end do
 
-            ppi(1) = p0-.5*dzw(1)*gravity                         &
+            ppi(1) = psurf_jw-.5*dzw(1)*gravity                   &
                           *(1.25*(rr(1,i)+rb(1,i))*(1.+scalars(index_qv,1,i))   &
                             -.25*(rr(2,i)+rb(2,i))*(1.+scalars(index_qv,2,i)))
 
@@ -1092,12 +1106,12 @@ module init_atm_cases
          iCell2 = cellsOnEdge(2,iEdge)
          flux = (0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
 
-         if (config_init_case == 2) then
+         if (jw_case == 2) then
             r_pert = sphere_distance( latEdge(iEdge), lonEdge(iEdge), &
                                       lat_pert, lon_pert, 1.0_RKIND)/(pert_radius)
             u_pert = u_perturbation*exp(-r_pert**2)*(lat2-lat1) * sphere_radius / dvEdge(iEdge)
 
-         else if (config_init_case == 3) then
+         else if (jw_case == 3) then
             lon_Edge = lonEdge(iEdge)
             u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert)) &
                          *(0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
@@ -1269,6 +1283,41 @@ module init_atm_cases
       end do
 
    end subroutine init_atm_case_jw
+
+
+   real (kind=RKIND) function jw_etas(phi, u0, t0, dtdz, a, om)
+      ! eta at which the JW geopotential of latitude phi is zero (flat surface)
+      implicit none
+      real (kind=RKIND), intent(in) :: phi, u0, t0, dtdz, a, om
+      real (kind=RKIND) :: lo, hi, mid, flo, fmid
+      integer :: it
+      lo = 0.8_RKIND
+      hi = 1.2_RKIND
+      flo = jw_geopot(lo, phi, u0, t0, dtdz, a, om)
+      do it = 1, 100
+         mid = 0.5_RKIND*(lo+hi)
+         fmid = jw_geopot(mid, phi, u0, t0, dtdz, a, om)
+         if (fmid*flo > 0.0_RKIND) then
+            lo = mid
+            flo = fmid
+         else
+            hi = mid
+         end if
+      end do
+      jw_etas = 0.5_RKIND*(lo+hi)
+   end function jw_etas
+
+
+   real (kind=RKIND) function jw_geopot(eta, phi, u0, t0, dtdz, a, om)
+      implicit none
+      real (kind=RKIND), intent(in) :: eta, phi, u0, t0, dtdz, a, om
+      real (kind=RKIND) :: etav
+      etav = (eta - 0.252_RKIND)*pii/2.0_RKIND
+      jw_geopot = t0*gravity/dtdz*(1.0_RKIND - eta**(rgas*dtdz/gravity))                  &
+                + u0*cos(etav)**1.5_RKIND*((-2.0_RKIND*sin(phi)**6*(cos(phi)**2+1.0_RKIND/3.0_RKIND)+10.0_RKIND/63.0_RKIND) &
+                  *u0*cos(etav)**1.5_RKIND                                                &
+                + (1.6_RKIND*cos(phi)**3*(sin(phi)**2+2.0_RKIND/3.0_RKIND)-pii/4.0_RKIND)*a*om)
+   end function jw_geopot
 
 
    subroutine init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1_in,lat2_in,dvEdge,a,u0,nz1,nlat)

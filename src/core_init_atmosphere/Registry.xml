@@ -67,8 +67,9 @@
                                         9 = lateral boundary conditions update file for use with real-data simulations \newline
                                         10 = idealized LES case \newline
                                         11 = isothermal solid-body zonal flow, steady state \newline
-                                        13 = CAM-MPAS 3-d grid with specified topography and zeta levels"
-                     possible_values="1 -- 11, or 13"/>
+                                        13 = CAM-MPAS 3-d grid with specified topography and zeta levels, \newline
+                                        17, 18, 19 = cases 1, 2, 3 with a flat surface (surface pressure p0 eta_s(lat) of the JW fields)"
+                     possible_values="1 -- 11, 13, or 17 -- 19"/>
 
                 <nml_option name="config_calendar_type" type="character" default_value="gregorian" in_defaults="false"
                      units="-"
