@@ -112,6 +112,9 @@ module atm_time_integration
    ! Whether to use the reconstucted cell velocity to compute ke
    logical :: config_ke_use_reconstructed_vel, config_ke_use_vertex_reconstructed_vel
 
+   ! Whether to correct edge values between xEdge and the Voronoi edge midpoint
+   logical :: config_edge_point_correction
+
 
    contains
 
@@ -137,7 +140,7 @@ module atm_time_integration
    subroutine mpas_atm_dynamics_checks(dminfo, blockList, streamManager, ierr)
 
        use mpas_log, only : mpas_log_write
-       use mpas_derived_types, only : dm_info, block_type, MPAS_LOG_WARN
+       use mpas_derived_types, only : dm_info, block_type, MPAS_LOG_WARN, MPAS_LOG_ERR
        use mpas_pool_routines, only : mpas_pool_get_config
 
        implicit none
@@ -150,6 +153,7 @@ module atm_time_integration
        logical, pointer :: config_ke_use_reconstructed_vel_ptr, config_ke_use_vertex_reconstructed_vel_ptr
        logical, pointer :: config_positive_definite
        real (kind=RKIND), pointer :: config_epssm
+       character (len=StrKIND), pointer :: config_smdiv_scheme
 
 
        call mpas_log_write('')
@@ -205,6 +209,16 @@ module atm_time_integration
        end if
 
        ierr = 0
+
+       nullify(config_smdiv_scheme)
+       call mpas_pool_get_config(blocklist % configs, 'config_smdiv_scheme', config_smdiv_scheme)
+
+       if (trim(config_smdiv_scheme) /= 'scale_aware' .and. trim(config_smdiv_scheme) /= 'forward_weight') then
+           call mpas_log_write('config_smdiv_scheme = '//trim(config_smdiv_scheme)//' is not supported,', &
+                               messageType=MPAS_LOG_ERR)
+           call mpas_log_write('use scale_aware or forward_weight.', messageType=MPAS_LOG_ERR)
+           ierr = 1
+       end if
 
        nullify(config_ke_use_vertex_reconstructed_vel_ptr)
        call mpas_pool_get_config(blocklist % configs, 'config_ke_use_vertex_reconstructed_vel', config_ke_use_vertex_reconstructed_vel_ptr)
@@ -1953,6 +1967,7 @@ module atm_time_integration
       logical, pointer :: config_positive_definite
       logical, pointer :: config_monotonic
       logical, pointer :: config_gpu_aware_mpi
+      character (len=StrKIND), pointer :: config_smdiv_scheme
       character (len=StrKIND), pointer :: config_microp_scheme
       character (len=StrKIND), pointer :: config_convection_scheme
 
@@ -1997,6 +2012,7 @@ module atm_time_integration
       call mpas_pool_get_config(block % configs, 'config_scalar_advection', config_scalar_advection)
       call mpas_pool_get_config(block % configs, 'config_positive_definite', config_positive_definite)
       call mpas_pool_get_config(block % configs, 'config_monotonic', config_monotonic)
+      call mpas_pool_get_config(block % configs, 'config_smdiv_scheme', config_smdiv_scheme)
       call mpas_pool_get_config(block % configs, 'config_gpu_aware_mpi', config_gpu_aware_mpi)
       call mpas_pool_get_config(block % configs, 'config_IAU_option', config_IAU_option)
       !  config variables for dynamics-transport splitting, WCS 18 November 2014
@@ -2444,16 +2460,18 @@ module atm_time_integration
 
 !  complete update of horizontal momentum by including 3d divergence damping at the end of the acoustic step
 
-               call mpas_timer_start('atm_divergence_damping_3d')
+               if (trim(config_smdiv_scheme) == 'scale_aware') then
+                  call mpas_timer_start('atm_divergence_damping_3d')
 
 !$OMP PARALLEL DO
-               do thread=1,nThreads
-                  call atm_divergence_damping_3d( state, diag, mesh, block % configs, rk_sub_timestep(rk_step), &
-                                                  edgeThreadStart(thread), edgeThreadEnd(thread) )
-               end do
+                  do thread=1,nThreads
+                     call atm_divergence_damping_3d( state, diag, mesh, block % configs, rk_sub_timestep(rk_step), &
+                                                     edgeThreadStart(thread), edgeThreadEnd(thread) )
+                  end do
 !$OMP END PARALLEL DO
 
-               call mpas_timer_stop('atm_divergence_damping_3d')
+                  call mpas_timer_stop('atm_divergence_damping_3d')
+               end if
 
             end do  ! end of acoustic steps loop
 
@@ -2540,7 +2558,7 @@ module atm_time_integration
             call mpas_pool_get_array(state, 'u', u, 2)
             !$acc update self(u) if (.not. config_gpu_aware_mpi)
             ! u
-            if (config_apply_lbcs) then
+            if (config_apply_lbcs .or. config_edge_point_correction) then
                call exchange_halo_group(domain, 'dynamics:u_123', config_gpu_aware_mpi)
             else
                call exchange_halo_group(domain, 'dynamics:u_3', config_gpu_aware_mpi)
@@ -2590,9 +2608,18 @@ module atm_time_integration
 
             call mpas_timer_start('atm_compute_solve_diagnostics')
 
+            if (config_edge_point_correction) then
+               call atm_compute_u_point(state, 2, diag, mesh, nThreads, edgeThreadStart, edgeThreadEnd)
+               call exchange_halo_group(domain, 'dynamics:u_point', config_gpu_aware_mpi)
+            end if
+
             if (config_ke_use_reconstructed_vel) then
 
-               call mpas_pool_get_array(state, 'u', u, 2)
+               if (config_edge_point_correction) then
+                  call mpas_pool_get_array(diag, 'u_point', u)
+               else
+                  call mpas_pool_get_array(state, 'u', u, 2)
+               end if
                call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
                call mpas_pool_get_array(diag, 'uReconstructY', uReconstructY)
                call mpas_pool_get_array(diag, 'uReconstructZ', uReconstructZ)
@@ -3787,10 +3814,32 @@ module atm_time_integration
 
       integer, pointer :: nEdges, nCellsSolve
 
+      logical, pointer :: config_acoustic_pgf_zz
+      character (len=StrKIND), pointer :: config_smdiv_scheme
+      real (kind=RKIND), pointer :: config_smdiv
+      real (kind=RKIND) :: smdiv_forward
+
+      integer, dimension(:,:), pointer :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), pointer :: edgeShift
+      real (kind=RKIND), dimension(:,:), pointer :: baryVertex
+
+      call mpas_pool_get_config(configs, 'config_acoustic_pgf_zz', config_acoustic_pgf_zz)
+      call mpas_pool_get_config(configs, 'config_smdiv_scheme', config_smdiv_scheme)
+      call mpas_pool_get_config(configs, 'config_smdiv', config_smdiv)
+      if (trim(config_smdiv_scheme) == 'forward_weight') then
+         smdiv_forward = config_smdiv
+      else
+         smdiv_forward = 0.0_RKIND
+      end if
+
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(mesh, 'edgesOnCell_sign', edgesOnCell_sign)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
       call mpas_pool_get_array(mesh, 'specZoneMaskEdge', specZoneMaskEdge)
       call mpas_pool_get_array(mesh, 'specZoneMaskCell', specZoneMaskCell)
 
@@ -3864,7 +3913,9 @@ module atm_time_integration
                                    invAreaCell, cofrz, dvEdge, nEdgesOnCell, cellsOnEdge, edgesOnCell, edgesOnCell_sign, &
                                    dts, small_step, cf1, cf2, cf3, &
                                    etp, etm, ewp, ewm,    &
-                                   specZoneMaskEdge, specZoneMaskCell &
+                                   specZoneMaskEdge, specZoneMaskCell, &
+                                   config_acoustic_pgf_zz, smdiv_forward, &
+                                   cellsOnVertex, verticesOnEdge, edgeShift, baryVertex &
                                    )
 
    end subroutine atm_advance_acoustic_step
@@ -3878,7 +3929,9 @@ module atm_time_integration
                                    invAreaCell, cofrz, dvEdge, nEdgesOnCell, cellsOnEdge, edgesOnCell, edgesOnCell_sign, &
                                    dts, small_step, cf1, cf2, cf3, &
                                    etp, etm, ewp, ewm,    &
-                                   specZoneMaskEdge, specZoneMaskCell &
+                                   specZoneMaskEdge, specZoneMaskCell, &
+                                   pgf_zz, smdiv_forward, &
+                                   cellsOnVertex, verticesOnEdge, edgeShift, baryVertex &
                                    )
 
       use mpas_atm_dimensions
@@ -3953,6 +4006,11 @@ module atm_time_integration
       integer, intent(in) :: small_step
       real (kind=RKIND), intent(in) :: dts, cf1, cf2, cf3
       real (kind=RKIND), dimension(nVertLevels) :: ts, rs
+      logical, intent(in) :: pgf_zz                  ! difference zz*rtheta_pp in the horizontal pressure gradient
+      real (kind=RKIND), intent(in) :: smdiv_forward ! forward weight of rtheta_pp in that gradient
+      integer, dimension(:,:), intent(in) :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), intent(in) :: edgeShift
+      real (kind=RKIND), dimension(:,:), intent(in) :: baryVertex
 
 
       !
@@ -3961,11 +4019,15 @@ module atm_time_integration
       integer :: cell1, cell2, iEdge, iCell, i, k
       real (kind=RKIND) :: c2, rcv, rtheta_pp_tmp
       real (kind=RKIND) :: pgrad, flux, rdts
+      real (kind=RKIND) :: rt1, rt2
+      logical :: pgf_alt
+      real (kind=RKIND), dimension(nVertLevels) :: dtheta
 
 
       rcv = rgas / (cp - rgas)
       c2 = cp * rcv
       rdts = 1./dts
+      pgf_alt = pgf_zz .or. smdiv_forward /= 0.0_RKIND
 
 
       if(small_step /= 1) then  !  not needed on first small step
@@ -3993,7 +4055,18 @@ module atm_time_integration
 !DIR$ IVDEP
               !$acc loop vector
               do k=1,nVertLevels
-                 pgrad = ((rtheta_pp(k,cell2)-rtheta_pp(k,cell1))*invDcEdge(iEdge) )/(.5*(zz(k,cell2)+zz(k,cell1)))
+                 if (pgf_alt) then
+                    ! rtheta_pp_old is rtheta_pp at the start of the previous acoustic step
+                    rt1 = rtheta_pp(k,cell1) + smdiv_forward*(rtheta_pp(k,cell1)-rtheta_pp_old(k,cell1))
+                    rt2 = rtheta_pp(k,cell2) + smdiv_forward*(rtheta_pp(k,cell2)-rtheta_pp_old(k,cell2))
+                    if (pgf_zz) then
+                       rt1 = zz(k,cell1)*rt1
+                       rt2 = zz(k,cell2)*rt2
+                    end if
+                    pgrad = ((rt2-rt1)*invDcEdge(iEdge) )/(.5*(zz(k,cell2)+zz(k,cell1)))
+                 else
+                    pgrad = ((rtheta_pp(k,cell2)-rtheta_pp(k,cell1))*invDcEdge(iEdge) )/(.5*(zz(k,cell2)+zz(k,cell1)))
+                 end if
                  pgrad = cqu(k,iEdge)*0.5*c2*(exner(k,cell1)+exner(k,cell2))*pgrad
                  pgrad = pgrad + 0.5*zxu(k,iEdge)*gravity*(rho_pp(k,cell1)+rho_pp(k,cell2))
                  ru_p(k,iEdge) = ru_p(k,iEdge) + dts*(tend_ru(k,iEdge) - (1.0_RKIND - specZoneMaskEdge(iEdge))*pgrad)
@@ -4092,6 +4165,14 @@ module atm_time_integration
                iEdge = edgesOnCell(i,iCell)
                cell1 = cellsOnEdge(1,iEdge)
                cell2 = cellsOnEdge(2,iEdge)
+               if (config_edge_point_correction) then
+                  call atm_edge_point_shift(theta_m, iEdge, cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, dtheta)
+                  do k=1,nVertLevels
+                     flux = edgesOnCell_sign(i,iCell)*dts*dvEdge(iEdge)*ru_p(k,iEdge) * invAreaCell(iCell)
+                     rs(k) = rs(k)-flux
+                     ts(k) = ts(k)-flux*(0.5*(theta_m(k,cell2)+theta_m(k,cell1))+dtheta(k))
+                  end do
+               else
 !DIR$ IVDEP
                !$acc loop vector
                do k=1,nVertLevels
@@ -4099,6 +4180,7 @@ module atm_time_integration
                   rs(k) = rs(k)-flux
                   ts(k) = ts(k)-flux*0.5*(theta_m(k,cell2)+theta_m(k,cell1))
                end do
+               end if
             end do
 
             ! vertically implicit acoustic and gravity wave integration.
@@ -4316,6 +4398,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), pointer :: edgesOnCell_sign
       integer, dimension(:,:), pointer :: cellsOnEdge, edgesOnCell
       integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), pointer :: edgeShift
+      real (kind=RKIND), dimension(:,:), pointer :: baryVertex
 
       integer :: i, iCell, iEdge, k, cell1, cell2
       integer, pointer :: nVertLevels, nCells, nCellsSolve, nEdges, nEdgesSolve
@@ -4366,6 +4451,10 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'fzm', fzm)
       call mpas_pool_get_array(mesh, 'fzp', fzp)
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(mesh, 'edgesOnCell_sign', edgesOnCell_sign)
       call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
@@ -4389,7 +4478,8 @@ module atm_time_integration
                              cf1, cf2, cf3, &
                              bdyMaskCell, &  !  addition for regional_MPAS
                              cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
-                             cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
+                             cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd, &
+                             cellsOnVertex, verticesOnEdge, edgeShift, baryVertex)
 
    end subroutine atm_recover_large_step_variables
 
@@ -4402,7 +4492,8 @@ module atm_time_integration
                              cf1, cf2, cf3, &
                              bdyMaskCell, &  ! addition for regional_MPAS
                              cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
-                             cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
+                             cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd, &
+                             cellsOnVertex, verticesOnEdge, edgeShift, baryVertex)
 
       use mpas_atm_dimensions
 
@@ -4453,6 +4544,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(nVertLevels+1,maxEdges,nCells+1) :: zb3_cell
       real (kind=RKIND), dimension(maxEdges,nCells+1) :: edgesOnCell_sign
       integer, dimension(2,nEdges+1) :: cellsOnEdge
+      integer, dimension(:,:), intent(in) :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), intent(in) :: edgeShift
+      real (kind=RKIND), dimension(:,:), intent(in) :: baryVertex
       integer, dimension(maxEdges,nCells+1) :: edgesOnCell
       integer, dimension(nCells+1) :: nEdgesOnCell
 
@@ -4467,6 +4561,7 @@ module atm_time_integration
       !
       integer :: i, iCell, iEdge, k, cell1, cell2
       real (kind=RKIND) :: invNs, rcv, p0, flux
+      real (kind=RKIND), dimension(nVertLevels) :: drho
 
 
       rcv = rgas/(cp-rgas)
@@ -4568,6 +4663,17 @@ module atm_time_integration
          end do
       end do
       !$acc end parallel
+
+      if (config_edge_point_correction) then
+         do iEdge=edgeStart,edgeEnd
+            cell1 = cellsOnEdge(1,iEdge)
+            cell2 = cellsOnEdge(2,iEdge)
+            call atm_edge_point_shift(rho_zz, iEdge, cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, drho)
+            do k = 1, nVertLevels
+               u(k,iEdge) = ru(k,iEdge)/(0.5_RKIND*(rho_zz(k,cell1)+rho_zz(k,cell2))+drho(k))
+            end do
+         end do
+      end if
 
 !$OMP BARRIER
 
@@ -5940,6 +6046,9 @@ module atm_time_integration
 
       real (kind=RKIND), dimension(:,:,:), pointer :: deriv_two
       integer, dimension(:,:), pointer :: cellsOnEdge, verticesOnEdge, edgesOnCell, edgesOnEdge, cellsOnCell, edgesOnVertex
+      integer, dimension(:,:), pointer :: cellsOnVertex
+      real (kind=RKIND), dimension(:), pointer :: edgeShift
+      real (kind=RKIND), dimension(:,:), pointer :: baryVertex, u_tan
       integer, dimension(:), pointer :: nEdgesOnCell, nEdgesOnEdge
       real (kind=RKIND), dimension(:), pointer :: latCell, latEdge, angleEdge, u_init, v_init
 
@@ -6076,6 +6185,14 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(mesh, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
+      if (config_edge_point_correction) then
+         call mpas_pool_get_array(diag, 'u_point', u_tan)
+      else
+         call mpas_pool_get_array(state, 'u', u_tan, 2)
+      end if
       call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
       call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
@@ -6182,7 +6299,8 @@ module atm_time_integration
          config_surface_heat_flux, config_surface_moisture_flux, config_surface_drag_coefficient, &
          rthdynten, ustm, hfx, qfx, &
          cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
-         cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
+         cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd, &
+         u_tan, cellsOnVertex, edgeShift, baryVertex)
 
          if (nopbl) then
              deallocate(ustm)
@@ -6217,7 +6335,8 @@ module atm_time_integration
       config_surface_heat_flux, config_surface_moisture_flux, config_surface_drag_coefficient, &
       rthdynten, ustm, hfx, qfx, &
       cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
-      cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
+      cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd, &
+      u_tan, cellsOnVertex, edgeShift, baryVertex)
 
 
       use mpas_atm_dimensions
@@ -6248,6 +6367,10 @@ module atm_time_integration
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: rho_zz
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: ru
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u_tan   ! u, or u_point with config_edge_point_correction
+      integer, dimension(:,:), intent(in) :: cellsOnVertex
+      real (kind=RKIND), dimension(:), intent(in) :: edgeShift
+      real (kind=RKIND), dimension(:,:), intent(in) :: baryVertex
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: v
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: tend_u
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: divergence
@@ -6389,6 +6512,7 @@ module atm_time_integration
 
       logical, parameter :: perturbation_coriolis = .true.
       real (kind=RKIND) :: reference_u
+      real (kind=RKIND), dimension(nVertLevels) :: dtheta
 
       flux4(q_im2, q_im1, q_i, q_ip1, ua) =                     &
                 ua*( 7.*(q_i + q_im1) - (q_ip1 + q_im2) )/12.0
@@ -6623,7 +6747,7 @@ module atm_time_integration
                workpv = 0.5 * (pv_edge(k,iEdge) + pv_edge(k,eoe))
 !  the original definition of pv_edge had a factor of 1/density.  We have removed that factor
 !  given that it was not integral to any conservation property of the system
-               q(k) = q(k) + weightsOnEdge(j,iEdge) * u(k,eoe) * workpv
+               q(k) = q(k) + weightsOnEdge(j,iEdge) * u_tan(k,eoe) * workpv
             end do
          end do
 
@@ -6951,12 +7075,21 @@ module atm_time_integration
             iEdge = edgesOnCell(i,iCell)
             cell1 = cellsOnEdge(1,iEdge)
             cell2 = cellsOnEdge(2,iEdge)
+            if (config_edge_point_correction) then
+               call atm_edge_point_shift(theta_m_save, iEdge, cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, dtheta)
+               do k=1,nVertLevels
+                  flux = edgesOnCell_sign(i,iCell)*dvEdge(iEdge)*(ru_save(k,iEdge)-ru(k,iEdge)) &
+                         *(0.5*(theta_m_save(k,cell2)+theta_m_save(k,cell1))+dtheta(k))
+                  tend_theta(k,iCell) = tend_theta(k,iCell)-flux
+               end do
+            else
 !DIR$ IVDEP
             !$acc loop vector
             do k=1,nVertLevels
                flux = edgesOnCell_sign(i,iCell)*dvEdge(iEdge)*(ru_save(k,iEdge)-ru(k,iEdge))*0.5*(theta_m_save(k,cell2)+theta_m_save(k,cell1))
                tend_theta(k,iCell) = tend_theta(k,iCell)-flux  ! division by areaCell picked up down below
             end do
+            end if
           end do
         end do
         !$acc end parallel
@@ -7090,12 +7223,21 @@ module atm_time_integration
 
       real (kind=RKIND), pointer :: config_apvm_upwinding
       real (kind=RKIND), dimension(:,:,:), pointer :: vertex_coeffs_reconstruct
+      real (kind=RKIND), dimension(:,:), pointer :: u_tan, baryVertex
+      real (kind=RKIND), dimension(:), pointer :: edgeShift
 
 
       call mpas_pool_get_config(configs, 'config_apvm_upwinding', config_apvm_upwinding)
 
       call mpas_pool_get_array(state, 'rho_zz', h, time_lev)
       call mpas_pool_get_array(state, 'u', u, time_lev)
+      if (config_edge_point_correction) then
+         call mpas_pool_get_array(diag, 'u_point', u_tan)
+      else
+         u_tan => u
+      end if
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
 
       call mpas_pool_get_array(diag, 'v', v)
       call mpas_pool_get_array(diag, 'rho_edge', h_edge)
@@ -7150,7 +7292,7 @@ module atm_time_integration
                gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
                edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
                cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
-               rk_step)
+               u_tan, edgeShift, baryVertex, rk_step)
 
       if (config_ke_use_vertex_reconstructed_vel) then
 
@@ -7158,7 +7300,7 @@ module atm_time_integration
 
           call atm_compute_solve_ke_use_vertex_reconstruct_work(nCells, nEdges, nVertices, &
               vertexDegree, invAreaCell, &
-              kiteAreasOnVertex, kiteForCell, u, ke, &
+              kiteAreasOnVertex, kiteForCell, u_tan, ke, &
               edgesOnVertex, verticesOnCell, nEdgesOnCell, edgesOnCell, &
               cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
               vertex_coeffs_reconstruct)
@@ -7176,7 +7318,7 @@ module atm_time_integration
             gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
             edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
             cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
-            rk_step)
+            u_tan, edgeShift, baryVertex, rk_step)
 
       use mpas_atm_dimensions
 
@@ -7200,6 +7342,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: h_edge
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: h
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u_tan   ! u, or u_point with config_edge_point_correction
+      real (kind=RKIND), dimension(:), intent(in) :: edgeShift
+      real (kind=RKIND), dimension(:,:), intent(in) :: baryVertex
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: v
       real (kind=RKIND), dimension(nVertLevels,nVertices+1) :: vorticity
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: ke
@@ -7233,6 +7378,7 @@ module atm_time_integration
       integer :: iEdge, iCell, iVertex, k, cell1, cell2, eoe, i, j
       real (kind=RKIND) :: h_vertex, r, s
       real (kind=RKIND) :: r1, r2
+      real (kind=RKIND), dimension(nVertLevels) :: dh
 
       logical, parameter :: hollingsworth=.true.
       real (kind=RKIND) :: ke_fact, efac
@@ -7250,7 +7396,7 @@ module atm_time_integration
 
             !$acc loop vector
             do k=1,nVertLevels
-               ke_edge(k,iEdge) = efac*u(k,iEdge)**2
+               ke_edge(k,iEdge) = efac*u_tan(k,iEdge)**2
             end do
 
          enddo
@@ -7288,7 +7434,7 @@ module atm_time_integration
 !DIR$ IVDEP
             !$acc loop vector
             do k=1,nVertLevels
-               vorticity(k,iVertex) = vorticity(k,iVertex) + s * u(k,iEdge)
+               vorticity(k,iVertex) = vorticity(k,iVertex) + s * u_tan(k,iEdge)
             end do
          end do
 !DIR$ IVDEP
@@ -7325,6 +7471,15 @@ module atm_time_integration
          end do
       end do
       !$acc end parallel
+
+      if (config_edge_point_correction) then
+         do iEdge=edgeStart,edgeEnd
+            call atm_edge_point_shift(h, iEdge, cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, dh)
+            do k=1,nVertLevels
+               h_edge(k,iEdge) = h_edge(k,iEdge) + dh(k)
+            end do
+         end do
+      end if
 
       if (.not.config_ke_use_reconstructed_vel) then
 !$OMP BARRIER
@@ -7464,7 +7619,7 @@ module atm_time_integration
 !DIR$ IVDEP
             !$acc loop vector
             do k = 1,nVertLevels
-              v(k,iEdge) = v(k,iEdge) + weightsOnEdge(i,iEdge) * u(k, eoe)
+              v(k,iEdge) = v(k,iEdge) + weightsOnEdge(i,iEdge) * u_tan(k, eoe)
             end do
           end do
         end do
@@ -7682,6 +7837,237 @@ module atm_time_integration
    end subroutine atm_compute_solve_ke_use_vertex_reconstruct_work
 
 
+   !----------------------------------------------------------------------
+   !  routine atm_edge_point_shift
+   !
+   !> \brief Change of the edge value of a cell field from xEdge to the Voronoi edge midpoint
+   !> \details
+   !>  df = edgeShift * (f(v2) - f(v1)), with f interpolated linearly from cellsOnVertex
+   !>  to the two vertices of the edge (baryVertex). Zero where edgeShift is zero.
+   !----------------------------------------------------------------------
+   subroutine atm_edge_point_shift(f, iEdge, cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, df)
+
+      implicit none
+
+      real (kind=RKIND), dimension(:,:), intent(in) :: f
+      integer, intent(in) :: iEdge
+      integer, dimension(:,:), intent(in) :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), intent(in) :: edgeShift
+      real (kind=RKIND), dimension(:,:), intent(in) :: baryVertex
+      real (kind=RKIND), dimension(:), intent(out) :: df
+
+      integer :: i, v1, v2
+
+      df(:) = 0.0_RKIND
+      if (edgeShift(iEdge) == 0.0_RKIND) return
+      v1 = verticesOnEdge(1,iEdge)
+      v2 = verticesOnEdge(2,iEdge)
+      do i = 1, size(baryVertex,1)
+         df(:) = df(:) + baryVertex(i,v2) * f(:,cellsOnVertex(i,v2)) - baryVertex(i,v1) * f(:,cellsOnVertex(i,v1))
+      end do
+      df(:) = edgeShift(iEdge) * df(:)
+
+   end subroutine atm_edge_point_shift
+
+
+   !----------------------------------------------------------------------
+   !  routine atm_compute_u_point
+   !
+   !> \brief Normal velocity at xEdge from the edge-mean normal velocity
+   !> \details
+   !>  u_point = u - edgeShift * (V(v2) - V(v1)) . n, with V the cell velocities of
+   !>  coeffs_reconstruct (left in uReconstructX/Y/Z/Zonal/Meridional) interpolated
+   !>  linearly to the vertices. Valid on the edges whose vertices have all their cells
+   !>  in the block, so the caller exchanges the halo of u_point.
+   !----------------------------------------------------------------------
+   subroutine atm_compute_u_point(state, time_lev, diag, mesh, nThreads, edgeThreadStart, edgeThreadEnd)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: state
+      integer, intent(in) :: time_lev
+      type (mpas_pool_type), intent(inout) :: diag
+      type (mpas_pool_type), intent(in) :: mesh
+      integer, intent(in) :: nThreads
+      integer, dimension(:), intent(in) :: edgeThreadStart, edgeThreadEnd
+
+      real (kind=RKIND), dimension(:,:), pointer :: u, u_point, uReconstructX, uReconstructY, uReconstructZ, &
+                                                    uReconstructZonal, uReconstructMeridional, edgeNormalVectors, baryVertex
+      real (kind=RKIND), dimension(:), pointer :: edgeShift
+      integer, dimension(:,:), pointer :: cellsOnVertex, verticesOnEdge
+      integer :: thread
+
+      call mpas_pool_get_array(state, 'u', u, time_lev)
+      call mpas_pool_get_array(diag, 'u_point', u_point)
+      call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
+      call mpas_pool_get_array(diag, 'uReconstructY', uReconstructY)
+      call mpas_pool_get_array(diag, 'uReconstructZ', uReconstructZ)
+      call mpas_pool_get_array(diag, 'uReconstructZonal', uReconstructZonal)
+      call mpas_pool_get_array(diag, 'uReconstructMeridional', uReconstructMeridional)
+      call mpas_pool_get_array(mesh, 'edgeNormalVectors', edgeNormalVectors)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
+
+      call mpas_reconstruct(mesh, u, uReconstructX, uReconstructY, uReconstructZ, &
+                            uReconstructZonal, uReconstructMeridional, includeHalos=.true.)
+
+!$OMP PARALLEL DO
+      do thread=1,nThreads
+         call atm_compute_u_point_work(u, uReconstructX, uReconstructY, uReconstructZ, edgeNormalVectors, &
+                                       cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, u_point, &
+                                       edgeThreadStart(thread), edgeThreadEnd(thread))
+      end do
+!$OMP END PARALLEL DO
+
+   end subroutine atm_compute_u_point
+
+
+   subroutine atm_compute_u_point_work(u, uReconstructX, uReconstructY, uReconstructZ, edgeNormalVectors, &
+                                       cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, u_point, &
+                                       edgeStart, edgeEnd)
+
+      use mpas_atm_dimensions
+
+      implicit none
+
+      real (kind=RKIND), dimension(:,:), intent(in) :: u, uReconstructX, uReconstructY, uReconstructZ, edgeNormalVectors
+      integer, dimension(:,:), intent(in) :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), intent(in) :: edgeShift
+      real (kind=RKIND), dimension(:,:), intent(in) :: baryVertex
+      real (kind=RKIND), dimension(:,:), intent(inout) :: u_point
+      integer, intent(in) :: edgeStart, edgeEnd
+
+      integer :: iEdge, i, k, c1, c2, v1, v2
+      real (kind=RKIND) :: dv
+
+      do iEdge = edgeStart, edgeEnd
+         if (edgeShift(iEdge) == 0.0_RKIND) then
+            do k = 1, nVertLevels
+               u_point(k,iEdge) = u(k,iEdge)
+            end do
+            cycle
+         end if
+         v1 = verticesOnEdge(1,iEdge)
+         v2 = verticesOnEdge(2,iEdge)
+         do k = 1, nVertLevels
+            dv = 0.0_RKIND
+            do i = 1, size(baryVertex,1)
+               c2 = cellsOnVertex(i,v2)
+               c1 = cellsOnVertex(i,v1)
+               dv = dv + baryVertex(i,v2) * (edgeNormalVectors(1,iEdge) * uReconstructX(k,c2)   &
+                                           + edgeNormalVectors(2,iEdge) * uReconstructY(k,c2)   &
+                                           + edgeNormalVectors(3,iEdge) * uReconstructZ(k,c2))  &
+                       - baryVertex(i,v1) * (edgeNormalVectors(1,iEdge) * uReconstructX(k,c1)   &
+                                           + edgeNormalVectors(2,iEdge) * uReconstructY(k,c1)   &
+                                           + edgeNormalVectors(3,iEdge) * uReconstructZ(k,c1))
+            end do
+            u_point(k,iEdge) = u(k,iEdge) - edgeShift(iEdge) * dv
+         end do
+      end do
+
+   end subroutine atm_compute_u_point_work
+
+
+   !----------------------------------------------------------------------
+   !  routine atm_init_edge_point_diagnostics
+   !
+   !> \brief u_point of the initial state and the diagnostics that use it
+   !> \details
+   !>  Called once after atm_mpas_init_block, when config_edge_point_correction is set:
+   !>  computes u_point, exchanges its halo, and computes the solve diagnostics again,
+   !>  since the first ones lacked u_point on the outer halo edges.
+   !----------------------------------------------------------------------
+   subroutine atm_init_edge_point_diagnostics(domain, dt, exchange_halo_group)
+
+      implicit none
+
+      type (domain_type), intent(inout) :: domain
+      real (kind=RKIND), intent(in) :: dt
+      procedure (halo_exchange_routine) :: exchange_halo_group
+
+      type (block_type), pointer :: block
+      type (mpas_pool_type), pointer :: state, diag, mesh
+      real (kind=RKIND), dimension(:,:), pointer :: u, u_point, uReconstructX, uReconstructY, uReconstructZ, &
+                                                    uReconstructZonal, uReconstructMeridional
+      integer, pointer :: nThreads, nVertLevels, nVertices, nEdges
+      integer, dimension(:), pointer :: cellThreadStart, cellThreadEnd, vertexThreadStart, vertexThreadEnd, &
+                                        edgeThreadStart, edgeThreadEnd
+      integer :: thread
+
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'state', state)
+         call mpas_pool_get_subpool(block % structs, 'diag', diag)
+         call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
+         call mpas_pool_get_dimension(block % dimensions, 'nThreads', nThreads)
+         call mpas_pool_get_dimension(block % dimensions, 'edgeThreadStart', edgeThreadStart)
+         call mpas_pool_get_dimension(block % dimensions, 'edgeThreadEnd', edgeThreadEnd)
+         call atm_compute_u_point(state, 1, diag, mesh, nThreads, edgeThreadStart, edgeThreadEnd)
+         block => block % next
+      end do
+
+      call exchange_halo_group(domain, 'dynamics:u_point')
+
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'state', state)
+         call mpas_pool_get_subpool(block % structs, 'diag', diag)
+         call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
+         call mpas_pool_get_dimension(block % dimensions, 'nThreads', nThreads)
+         call mpas_pool_get_dimension(block % dimensions, 'cellThreadStart', cellThreadStart)
+         call mpas_pool_get_dimension(block % dimensions, 'cellThreadEnd', cellThreadEnd)
+         call mpas_pool_get_dimension(block % dimensions, 'vertexThreadStart', vertexThreadStart)
+         call mpas_pool_get_dimension(block % dimensions, 'vertexThreadEnd', vertexThreadEnd)
+         call mpas_pool_get_dimension(block % dimensions, 'edgeThreadStart', edgeThreadStart)
+         call mpas_pool_get_dimension(block % dimensions, 'edgeThreadEnd', edgeThreadEnd)
+         call mpas_pool_get_dimension(mesh, 'nVertLevels', nVertLevels)
+         call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
+         call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+         call mpas_pool_get_array(state, 'u', u, 1)
+         call mpas_pool_get_array(diag, 'u_point', u_point)
+         call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
+         call mpas_pool_get_array(diag, 'uReconstructY', uReconstructY)
+         call mpas_pool_get_array(diag, 'uReconstructZ', uReconstructZ)
+         call mpas_pool_get_array(diag, 'uReconstructZonal', uReconstructZonal)
+         call mpas_pool_get_array(diag, 'uReconstructMeridional', uReconstructMeridional)
+
+         if (config_ke_use_reconstructed_vel) then
+            call mpas_reconstruct(mesh, u_point, uReconstructX, uReconstructY, uReconstructZ, &
+                                  uReconstructZonal, uReconstructMeridional, includeHalos=.true.)
+         else
+            allocate(ke_edge(nVertLevels,nEdges+1))
+            ke_edge(:,nEdges+1) = 0.0_RKIND
+         end if
+         if (config_ke_use_vertex_reconstructed_vel .or. .not. config_ke_use_reconstructed_vel) then
+            allocate(ke_vertex(nVertLevels,nVertices+1))
+            ke_vertex(:,nVertices+1) = 0.0_RKIND
+         end if
+
+!$OMP PARALLEL DO
+         do thread=1,nThreads
+            call atm_compute_solve_diagnostics(dt, state, 1, diag, mesh, block % configs, &
+                                               cellThreadStart(thread), cellThreadEnd(thread), &
+                                               vertexThreadStart(thread), vertexThreadEnd(thread), &
+                                               edgeThreadStart(thread), edgeThreadEnd(thread))
+         end do
+!$OMP END PARALLEL DO
+
+         if (allocated(ke_edge)) deallocate(ke_edge)
+         if (allocated(ke_vertex)) deallocate(ke_vertex)
+
+         ! cell velocities of u for output, as after atm_mpas_init_block
+         call mpas_reconstruct(mesh, u, uReconstructX, uReconstructY, uReconstructZ, &
+                               uReconstructZonal, uReconstructMeridional, &
+                               includeHalos=config_ke_use_reconstructed_vel)
+
+         block => block % next
+      end do
+
+   end subroutine atm_init_edge_point_diagnostics
+
+
    subroutine atm_init_coupled_diagnostics(state, time_lev, diag, mesh, configs, &
                                        cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
                                        cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
@@ -7700,10 +8086,14 @@ module atm_time_integration
       integer, pointer :: nVertLevels_ptr
       integer, pointer :: index_qv_ptr
       integer          :: nVertLevels
+      real (kind=RKIND), dimension(:), allocatable :: drho
       integer          :: index_qv
       real (kind=RKIND) :: p0, rcv, flux
       integer, dimension(:), pointer :: nEdgesOnCell
       integer, dimension(:,:), pointer :: cellsOnEdge, edgesOnCell
+      integer, dimension(:,:), pointer :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), pointer :: edgeShift
+      real (kind=RKIND), dimension(:,:), pointer :: baryVertex
       real (kind=RKIND), dimension(:,:), pointer :: edgesOnCell_sign
       real (kind=RKIND), dimension(:,:), pointer :: theta_m
       real (kind=RKIND), dimension(:,:), pointer :: theta
@@ -7736,6 +8126,10 @@ module atm_time_integration
       index_qv = index_qv_ptr
 
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
       call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(mesh, 'edgesOnCell_sign', edgesOnCell_sign)
@@ -7807,6 +8201,19 @@ module atm_time_integration
          end do
       end do
       !$acc end parallel
+
+      if (config_edge_point_correction) then
+         allocate(drho(nVertLevels))
+         do iEdge=edgeStart,edgeEnd
+            cell1 = cellsOnEdge(1,iEdge)
+            cell2 = cellsOnEdge(2,iEdge)
+            call atm_edge_point_shift(rho_zz, iEdge, cellsOnVertex, verticesOnEdge, edgeShift, baryVertex, drho)
+            do k=1,nVertLevels
+               ru(k,iEdge) = u(k,iEdge) * (0.5_RKIND * (rho_zz(k,cell1) + rho_zz(k,cell2)) + drho(k))
+            end do
+         end do
+         deallocate(drho)
+      end if
 
 !$OMP BARRIER
 

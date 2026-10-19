@@ -141,6 +141,9 @@ module mpas_atm_halos
          call mpas_dmpar_exch_group_create(domain, 'dynamics:u_3')
          call mpas_dmpar_exch_group_add_field(domain, 'dynamics:u_3', 'u', timeLevel=2, haloLayers=(/3/))
 
+         call mpas_dmpar_exch_group_create(domain, 'dynamics:u_point')
+         call mpas_dmpar_exch_group_add_field(domain, 'dynamics:u_point', 'u_point', timeLevel=1, haloLayers=(/1,2,3/))
+
          call mpas_dmpar_exch_group_create(domain, 'dynamics:scalars')
          call mpas_dmpar_exch_group_add_field(domain, 'dynamics:scalars', 'scalars', timeLevel=2, haloLayers=(/1,2/))
 
@@ -268,6 +271,10 @@ module mpas_atm_halos
          call mpas_halo_exch_group_add_field(domain, 'dynamics:u_3', 'u', timeLevel=2, haloLayers=(/3/))
          call mpas_halo_exch_group_complete(domain, 'dynamics:u_3')
 
+         call mpas_halo_exch_group_create(domain, 'dynamics:u_point')
+         call mpas_halo_exch_group_add_field(domain, 'dynamics:u_point', 'u_point', timeLevel=1, haloLayers=(/1,2,3/))
+         call mpas_halo_exch_group_complete(domain, 'dynamics:u_point')
+
          call mpas_halo_exch_group_create(domain, 'dynamics:scalars')
          call mpas_halo_exch_group_add_field(domain, 'dynamics:scalars', 'scalars', timeLevel=2, haloLayers=(/1,2/))
          call mpas_halo_exch_group_complete(domain, 'dynamics:scalars')
@@ -373,6 +380,7 @@ module mpas_atm_halos
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:rtheta_pp')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:u_123')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:u_3')
+         call mpas_dmpar_exch_group_destroy(domain, 'dynamics:u_point')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:scalars')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:scalars_old')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:w')
@@ -409,6 +417,7 @@ module mpas_atm_halos
          call mpas_halo_exch_group_destroy(domain, 'dynamics:rtheta_pp')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:u_123')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:u_3')
+         call mpas_halo_exch_group_destroy(domain, 'dynamics:u_point')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:scalars')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:scalars_old')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:w')

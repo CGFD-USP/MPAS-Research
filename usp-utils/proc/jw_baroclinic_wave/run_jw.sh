@@ -21,7 +21,8 @@
 # groups) is appended to namelist.init_atmosphere. $JW_DT (s) replaces the time
 # step, $JW_HORIZ_MIXING the horizontal mixing (default 2d_smagorinsky),
 # $JW_SMDIV the divergence damping (default 0.1), and $JW_HISTORY_FIELDS and
-# $JW_DIAG_FIELDS the fields of the two output streams.
+# $JW_DIAG_FIELDS the fields of the two output streams. $JW_NHYD_EXTRA (namelist
+# lines) is appended to &nhyd_model, e.g. for options of the dynamics.
 # Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady> <levels> <config> <ranks> <duration>
 #   e.g. bash run_jw.sh $MPAS_DATA_ROOT/jw x1.40962 wave 60 consistent 48 15_00:00:00
 set -eu
@@ -153,6 +154,7 @@ else
 fi
 
 # namelist.atmosphere.<start|restart>: the first segment, and the next ones
+nhyd_extra=${JW_NHYD_EXTRA:+$'\n'$JW_NHYD_EXTRA}
 namelist() {
   cat << EOF
 &nhyd_model
@@ -184,7 +186,7 @@ namelist() {
     config_use_custom_weightsOnEdge = $weights
     config_use_custom_coeffs_reconstruct = $coeffs
     config_ke_use_reconstructed_vel = $ke
-    config_ke_use_vertex_reconstructed_vel = $vke
+    config_ke_use_vertex_reconstructed_vel = $vke$nhyd_extra
 /
 &damping
     config_zd = 22000.0

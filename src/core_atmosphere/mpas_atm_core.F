@@ -31,7 +31,8 @@ module atm_core
       use mpas_atm_diagnostics_manager, only : mpas_atm_diag_setup
       use mpas_atm_threading, only : mpas_atm_threading_init
       use atm_time_integration, only : mpas_atm_dynamics_init, &
-                              mpas_atm_pre_dynamics, mpas_atm_post_dynamics
+                              mpas_atm_pre_dynamics, mpas_atm_post_dynamics, &
+                              config_edge_point_correction, atm_init_edge_point_diagnostics
       use mpas_timer, only : mpas_timer_start, mpas_timer_stop
       use mpas_attlist, only : mpas_modify_att
       use mpas_string_utils, only : mpas_string_replace
@@ -287,6 +288,10 @@ module atm_core
           block => block % next
       end do
 
+      if (config_edge_point_correction) then
+         call atm_init_edge_point_diagnostics(domain, dt, exchange_halo_group)
+      end if
+
       call exchange_halo_group(domain, 'initialization:pv_edge,ru,rw')
 
       call mpas_atm_diag_setup(domain % streamManager, domain % blocklist % configs, &
@@ -432,6 +437,7 @@ module atm_core
 
       logical, pointer :: config_do_restart, config_do_DAcycling
       logical, pointer :: config_ke_use_reconstructed_vel_ptr, config_ke_use_vertex_reconstructed_vel_ptr
+      logical, pointer :: config_edge_point_correction_ptr
 
       logical, pointer :: on_a_sphere
       real (kind=RKIND), pointer :: sphere_radius
@@ -451,6 +457,9 @@ module atm_core
 
       config_ke_use_reconstructed_vel = config_ke_use_reconstructed_vel_ptr
       config_ke_use_vertex_reconstructed_vel = config_ke_use_vertex_reconstructed_vel_ptr
+
+      call mpas_pool_get_config(block % configs, 'config_edge_point_correction', config_edge_point_correction_ptr)
+      config_edge_point_correction = config_edge_point_correction_ptr
 
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       !!!! Compute inverses to avoid divides later
@@ -497,7 +506,14 @@ module atm_core
       call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
       call atm_initialize_deformation_weights(mesh, nCells, on_a_sphere, sphere_radius)
 
-      call atm_adv_coef_compression(mesh)
+      if (config_edge_point_correction) then
+         if (.not. on_a_sphere) then
+            call mpas_log_write('config_edge_point_correction requires a spherical mesh', messageType=MPAS_LOG_CRIT)
+         end if
+         call atm_compute_edge_point_weights(mesh, sphere_radius)
+      end if
+
+      call atm_adv_coef_compression(mesh, config_edge_point_correction)
 
       call atm_couple_coef_3rd_order(mesh, block % configs)
       
@@ -530,7 +546,8 @@ module atm_core
       endif
 
       call mpas_rbf_interp_initialize(mesh)
-      call mpas_init_reconstruct(mesh)
+      ! u_point needs the cell velocities on the halo cells
+      call mpas_init_reconstruct(mesh, includeHalos=config_edge_point_correction)
 
       call mpas_atm_init_custom_operators(block, mesh)
 
@@ -1310,6 +1327,105 @@ module atm_core
    end subroutine atm_compute_signs
 
 
+   !----------------------------------------------------------------------
+   !  routine atm_compute_edge_point_weights
+   !
+   !> \brief Weights of the edge-point correction (config_edge_point_correction)
+   !> \details
+   !>  edgeShift = R (xm - xt) . t / dvEdge, with xt and xm the midpoints of the
+   !>  cell-to-cell and vertex-to-vertex arcs of the edge and t the unit tangent at xt
+   !>  from vertex 1 to vertex 2. baryVertex holds the linear weights of the vertex in
+   !>  the triangle of its cells, in the tangent plane at the vertex. Both are zero on
+   !>  edges and vertices that touch a cell outside the block.
+   !----------------------------------------------------------------------
+   subroutine atm_compute_edge_point_weights(mesh, sphere_radius)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      real (kind=RKIND), intent(in) :: sphere_radius
+
+      real (kind=RKIND), dimension(:), pointer :: xCell, yCell, zCell, xVertex, yVertex, zVertex, dvEdge, edgeShift
+      real (kind=RKIND), dimension(:,:), pointer :: baryVertex
+      integer, dimension(:,:), pointer :: cellsOnEdge, verticesOnEdge, cellsOnVertex
+      integer, pointer :: nCells, nEdges, nVertices, vertexDegree
+      integer :: iEdge, iVertex, i
+      real (kind=RKIND), dimension(3) :: xv, xt, xm, t, a1, a2, a3
+      real (kind=RKIND), dimension(3,3) :: xc
+      real (kind=RKIND) :: d
+
+      call mpas_pool_get_array(mesh, 'xCell', xCell)
+      call mpas_pool_get_array(mesh, 'yCell', yCell)
+      call mpas_pool_get_array(mesh, 'zCell', zCell)
+      call mpas_pool_get_array(mesh, 'xVertex', xVertex)
+      call mpas_pool_get_array(mesh, 'yVertex', yVertex)
+      call mpas_pool_get_array(mesh, 'zVertex', zVertex)
+      call mpas_pool_get_array(mesh, 'dvEdge', dvEdge)
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
+      call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
+      call mpas_pool_get_dimension(mesh, 'vertexDegree', vertexDegree)
+
+      if (vertexDegree /= 3) then
+         call mpas_log_write('config_edge_point_correction requires vertexDegree = 3', messageType=MPAS_LOG_CRIT)
+      end if
+
+      do iVertex = 1, nVertices
+         baryVertex(:,iVertex) = 0.0_RKIND
+         if (any(cellsOnVertex(:,iVertex) > nCells)) cycle
+         xv = unit_vector(xVertex(iVertex), yVertex(iVertex), zVertex(iVertex))
+         do i = 1, 3
+            xc(:,i) = unit_vector(xCell(cellsOnVertex(i,iVertex)), yCell(cellsOnVertex(i,iVertex)), &
+                                  zCell(cellsOnVertex(i,iVertex)))
+         end do
+         a1 = (xc(:,1) - xv) - dot_product(xc(:,1) - xv, xv) * xv
+         a2 = (xc(:,2) - xv) - dot_product(xc(:,2) - xv, xv) * xv
+         a3 = (xc(:,3) - xv) - dot_product(xc(:,3) - xv, xv) * xv
+         d = dot_product(cross(a2 - a1, a3 - a1), xv)
+         baryVertex(1,iVertex) = dot_product(cross(a2, a3), xv) / d
+         baryVertex(2,iVertex) = dot_product(cross(a3, a1), xv) / d
+         baryVertex(3,iVertex) = dot_product(cross(a1, a2), xv) / d
+      end do
+
+      do iEdge = 1, nEdges
+         edgeShift(iEdge) = 0.0_RKIND
+         if (any(cellsOnEdge(:,iEdge) > nCells) .or. any(verticesOnEdge(:,iEdge) > nVertices)) cycle
+         if (any(cellsOnVertex(:,verticesOnEdge(1,iEdge)) > nCells) .or. &
+             any(cellsOnVertex(:,verticesOnEdge(2,iEdge)) > nCells)) cycle
+         xt = unit_vector(xCell(cellsOnEdge(1,iEdge)) + xCell(cellsOnEdge(2,iEdge)), &
+                          yCell(cellsOnEdge(1,iEdge)) + yCell(cellsOnEdge(2,iEdge)), &
+                          zCell(cellsOnEdge(1,iEdge)) + zCell(cellsOnEdge(2,iEdge)))
+         a1 = unit_vector(xVertex(verticesOnEdge(1,iEdge)), yVertex(verticesOnEdge(1,iEdge)), zVertex(verticesOnEdge(1,iEdge)))
+         a2 = unit_vector(xVertex(verticesOnEdge(2,iEdge)), yVertex(verticesOnEdge(2,iEdge)), zVertex(verticesOnEdge(2,iEdge)))
+         xm = a1 + a2
+         xm = xm / sqrt(dot_product(xm, xm))
+         t = (a2 - a1) - dot_product(a2 - a1, xt) * xt
+         t = t / sqrt(dot_product(t, t))
+         edgeShift(iEdge) = sphere_radius * dot_product(xm - xt, t) / dvEdge(iEdge)
+      end do
+
+   contains
+
+      function unit_vector(x, y, z) result(e)
+         real (kind=RKIND), intent(in) :: x, y, z
+         real (kind=RKIND), dimension(3) :: e
+         e = (/x, y, z/) / sqrt(x*x + y*y + z*z)
+      end function unit_vector
+
+      function cross(a, b) result(c)
+         real (kind=RKIND), dimension(3), intent(in) :: a, b
+         real (kind=RKIND), dimension(3) :: c
+         c = (/a(2)*b(3) - a(3)*b(2), a(3)*b(1) - a(1)*b(3), a(1)*b(2) - a(2)*b(1)/)
+      end function cross
+
+   end subroutine atm_compute_edge_point_weights
+
+
    subroutine atm_compute_damping_coefs(mesh, configs)
 
       implicit none
@@ -1427,11 +1543,12 @@ module atm_core
    end subroutine atm_compute_damping_coefs
 
 
-   subroutine atm_adv_coef_compression( mesh )
+   subroutine atm_adv_coef_compression( mesh, edge_point_correction )
 
       implicit none
 
       type (mpas_pool_type), intent(inout) :: mesh
+      logical, intent(in) :: edge_point_correction   ! centred edge value at the Voronoi edge midpoint
 
 
       real (kind=RKIND), dimension(:,:,:), pointer :: deriv_two
@@ -1439,6 +1556,11 @@ module atm_core
       integer, dimension(:,:), pointer :: cellsOnCell, cellsOnEdge, advCellsForEdge
       integer, dimension(:), pointer :: nEdgesOnCell, nAdvCellsForEdge
       real (kind=RKIND), dimension(:), pointer :: dcEdge, dvEdge
+      integer, dimension(:,:), pointer :: cellsOnVertex, verticesOnEdge
+      real (kind=RKIND), dimension(:), pointer :: edgeShift
+      real (kind=RKIND), dimension(:,:), pointer :: baryVertex
+      integer :: iv, iVertex
+      real (kind=RKIND) :: wsign
 
       integer :: cell1, cell2, iEdge, n, i, j, j_in, iCell
       integer, pointer :: nCells, nEdges
@@ -1456,6 +1578,10 @@ module atm_core
       call mpas_pool_get_array(mesh, 'nAdvCellsForEdge', nAdvCellsForEdge)
       call mpas_pool_get_array(mesh, 'dcEdge', dcEdge)
       call mpas_pool_get_array(mesh, 'dvEdge', dvEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgeShift', edgeShift)
+      call mpas_pool_get_array(mesh, 'baryVertex', baryVertex)
 
       call mpas_pool_get_dimension(mesh, 'nCells', nCells)
       call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
@@ -1561,6 +1687,25 @@ module atm_core
             end do
             adv_coefs(j_in,iEdge) = adv_coefs(j_in,iEdge) + 0.5
   
+            ! shift of the centred part to the Voronoi edge midpoint, edgeShift (f(v2) - f(v1))
+            if (edge_point_correction .and. edgeShift(iEdge) /= 0.0_RKIND) then
+               do iv = 1, 2
+                  iVertex = verticesOnEdge(iv,iEdge)
+                  wsign = real(2*iv - 3, RKIND)
+                  do i = 1, size(baryVertex,1)
+                     j_in = 0
+                     do j=1, n
+                        if( cell_list(j) == cellsOnVertex(i,iVertex) ) j_in = j
+                     end do
+                     if (j_in == 0) then
+                        call mpas_log_write('edge-point correction: a vertex cell is not in advCellsForEdge', &
+                                            messageType=MPAS_LOG_CRIT)
+                     end if
+                     adv_coefs(j_in,iEdge) = adv_coefs(j_in,iEdge) + wsign * edgeShift(iEdge) * baryVertex(i,iVertex)
+                  end do
+               end do
+            end if
+
           !  multiply by edge length - thus the flux is just dt*ru times the results of the vector-vector multiply
   
             do j=1,n
