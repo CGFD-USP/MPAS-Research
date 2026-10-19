@@ -99,13 +99,14 @@ module init_atm_cases
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_init_case', config_init_case)
 
-      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 17 .and. config_init_case <= 19)) then
+      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 17 .and. config_init_case <= 22)) then
 
          call mpas_log_write(' Jablonowski and Williamson baroclinic wave test case ')
-         if (config_init_case == 1 .or. config_init_case == 17) call mpas_log_write(' no initial perturbation ')
-         if (config_init_case == 2 .or. config_init_case == 18) call mpas_log_write(' initial perturbation included ')
-         if (config_init_case == 3 .or. config_init_case == 19) call mpas_log_write(' normal-mode perturbation included ')
-         if (config_init_case >= 17) call mpas_log_write(' flat surface ')
+         if (config_init_case == 1 .or. config_init_case == 17 .or. config_init_case == 20) call mpas_log_write(' no initial perturbation ')
+         if (config_init_case == 2 .or. config_init_case == 18 .or. config_init_case == 21) call mpas_log_write(' initial perturbation included ')
+         if (config_init_case == 3 .or. config_init_case == 19 .or. config_init_case == 22) call mpas_log_write(' normal-mode perturbation included ')
+         if (config_init_case >= 17 .and. config_init_case <= 19) call mpas_log_write(' flat surface ')
+         if (config_init_case >= 20) call mpas_log_write(' wind rebalanced against the pressure gradient of the model ')
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
 
@@ -120,7 +121,8 @@ module init_atm_cases
             call mpas_pool_get_dimension(block_ptr % dimensions, 'nVertLevels', nVertLevels)
 
             call mpas_log_write(' calling test case setup ')
-            call init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, block_ptr % configs, config_init_case >= 17)
+            call init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, block_ptr % configs, &
+                                config_init_case >= 17 .and. config_init_case <= 19, config_init_case >= 20)
             call decouple_variables(mesh, nCells, nVertLevels, state, diag)
             call mpas_log_write(' returned from test case setup ')
             block_ptr => block_ptr % next
@@ -448,7 +450,7 @@ module init_atm_cases
 
       !initialization of surface input variables technically not needed to run our current set of
       !idealized test cases:
-      if (config_init_case < 7 .or. config_init_case == 11 .or. (config_init_case >= 17 .and. config_init_case <= 19))  then
+      if (config_init_case < 7 .or. config_init_case == 11 .or. (config_init_case >= 17 .and. config_init_case <= 22))  then
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
             call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
@@ -464,7 +466,7 @@ module init_atm_cases
 
 !----------------------------------------------------------------------------------------------------------
 
-   subroutine init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, configs, flat_surface)
+   subroutine init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, configs, flat_surface, model_pgf)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Setup baroclinic wave test case from Jablonowski and Williamson 2008 (QJRMS)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -540,7 +542,7 @@ module init_atm_cases
       real (kind=RKIND), dimension(nVertLevels + 1, nlat) :: zgrid_2d
       real (kind=RKIND), dimension(nVertLevels, nlat) :: u_2d, pp_2d, rho_2d, qv_2d, etavs_2d, zz_2d
       real (kind=RKIND), dimension(nVertLevels, nlat) :: p_2d, pb_2d, ppb_2d, rr_2d, rb_2d, tb_2d, rtb_2d
-      real (kind=RKIND), dimension(nVertLevels, nlat-1) :: zx_2d 
+      real (kind=RKIND), dimension(nVertLevels+1, nlat-1) :: zx_2d 
       real (kind=RKIND), dimension(nlat) :: lat_2d
       real (kind=RKIND) :: dlat, hx_1d, psurf_jw
       real (kind=RKIND) :: z_edge, z_edge3, d2fdx2_cell1, d2fdx2_cell2
@@ -563,7 +565,7 @@ module init_atm_cases
       real (kind=RKIND), pointer :: config_coef_3rd_order
       integer, pointer :: config_theta_adv_order
       integer, pointer :: config_init_case
-      logical, intent(in) :: flat_surface
+      logical, intent(in) :: flat_surface, model_pgf
       integer :: jw_case
 
       character (len=StrKIND), pointer :: config_interface_projection
@@ -571,6 +573,7 @@ module init_atm_cases
       call mpas_pool_get_config(configs, 'config_init_case', config_init_case)
       jw_case = config_init_case
       if (flat_surface) jw_case = config_init_case - 16
+      if (model_pgf) jw_case = config_init_case - 19
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', config_coef_3rd_order)
       call mpas_pool_get_config(configs, 'config_theta_adv_order', config_theta_adv_order)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
@@ -944,13 +947,13 @@ module init_atm_cases
       if (rebalance) then
 
         do i=1,nlat-1
-          do k=1,nz1
+          do k=1,nz1+1
             zx_2d(k,i) = (zgrid_2d(k,i+1)-zgrid_2d(k,i))/(dlat*r_earth)
           end do
         end do
 
-        call init_atm_recompute_geostrophic_wind(u_2d, rho_2d, pp_2d, qv_2d, lat_2d, zz_2d, zx_2d,     &
-                                        cf1, cf2, cf3, fzm, fzp, rdzw, nz1, nlat, dlat, sphere_radius)
+        call init_atm_recompute_geostrophic_wind(u_2d, rho_2d, rb_2d, pp_2d, qv_2d, lat_2d, zz_2d, zx_2d, &
+                                        cf1, cf2, cf3, fzm, fzp, rdzw, nz1, nlat, dlat, sphere_radius, model_pgf)
 
       end if
 
@@ -1372,15 +1375,16 @@ module init_atm_cases
 
 
    !SHP-balance
-   subroutine init_atm_recompute_geostrophic_wind(u_2d,rho_2d,pp_2d,qv_2d,lat_2d,zz_2d,zx_2d,     &
-                                         cf1,cf2,cf3,fzm,fzp,rdzw,nz1,nlat,dlat,rad)
+   subroutine init_atm_recompute_geostrophic_wind(u_2d,rho_2d,rb_2d,pp_2d,qv_2d,lat_2d,zz_2d,zx_2d,     &
+                                         cf1,cf2,cf3,fzm,fzp,rdzw,nz1,nlat,dlat,rad,model_pgf)
 
       implicit none
    
       integer, intent(in) :: nz1,nlat
       real (kind=RKIND), dimension(nz1,nlat), intent(inout) :: u_2d
-      real (kind=RKIND), dimension(nz1,nlat), intent(in) :: rho_2d, pp_2d, qv_2d, zz_2d
-      real (kind=RKIND), dimension(nz1,nlat-1), intent(in) :: zx_2d
+      real (kind=RKIND), dimension(nz1,nlat), intent(in) :: rho_2d, rb_2d, pp_2d, qv_2d, zz_2d
+      real (kind=RKIND), dimension(nz1+1,nlat-1), intent(in) :: zx_2d
+      logical, intent(in) :: model_pgf
       real (kind=RKIND), dimension(nlat), intent(in) :: lat_2d
       real (kind=RKIND), dimension(nz1), intent(in) :: fzm, fzp, rdzw
       real (kind=RKIND), intent(in) :: cf1, cf2, cf3, dlat, rad
@@ -1389,6 +1393,7 @@ module init_atm_cases
       real (kind=RKIND), dimension(nz1,nlat-1) :: pgrad, ru, u
       real (kind=RKIND), dimension(nlat-1) :: f
       real (kind=RKIND), dimension(nz1+1)  :: dpzx
+      real (kind=RKIND), dimension(nz1,nlat) :: dpdz
    
    !   real (kind=RKIND), parameter :: omega_e = 7.29212e-05
       real (kind=RKIND) :: omega_e
@@ -1399,8 +1404,19 @@ module init_atm_cases
       r_earth  = rad
       omega_e = omega
       rdx = 1./(dlat*r_earth)
+
+      ! hydrostatic dp'/dz of the model, as in the large-step pressure gradient
+      if (model_pgf) dpdz(:,:) = -gravity*(rho_2d(:,:)*(1.+qv_2d(:,:)) - rb_2d(:,:))
    
       do i=1,nlat-1
+        if (model_pgf) then
+          do k=1,nz1
+            pgrad(k,i) = rdx*(pp_2d(k,i+1)-pp_2d(k,i))/(.5*(zz_2d(k,i)+zz_2d(k,i+1))) &
+                       - .25*(zx_2d(k,i)+zx_2d(k+1,i))*(dpdz(k,i)+dpdz(k,i+1))
+          end do
+          cycle
+        end if
+
         do k=1,nz1
           pgrad(k,i) = rdx*(pp_2d(k,i+1)/zz_2d(k,i+1)-pp_2d(k,i)/zz_2d(k,i))
         end do

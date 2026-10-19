@@ -18,6 +18,8 @@
 # Each folder gets RUN_INFO, whose "rerun" lines repeat the run by hand.
 # Flat surface: the cases wave-flat and steady-flat (init cases 18 and 17) use the JW fields over a
 # flat surface (surface pressure p0 eta_s(lat)), not directly comparable with published JW results.
+# Rebalanced wind: the cases wave-rebal and steady-rebal (init cases 21 and 20) are the JW cases with the
+# initial wind balanced against the pressure gradient of the model.
 # Other test cases (e.g. ../zonal_steady): a <case> other than wave and steady
 # takes its config_init_case from $JW_INIT_CASE, and $JW_INIT_EXTRA (namelist
 # groups) is appended to namelist.init_atmosphere. $JW_DT (s) replaces the time
@@ -25,7 +27,7 @@
 # $JW_SMDIV the divergence damping (default 0.1), and $JW_HISTORY_FIELDS and
 # $JW_DIAG_FIELDS the fields of the two output streams. $JW_NHYD_EXTRA (namelist
 # lines) is appended to &nhyd_model, e.g. for options of the dynamics.
-# Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady|wave-flat|steady-flat> <levels> <config> <ranks> <duration>
+# Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady|wave-flat|steady-flat|wave-rebal|steady-rebal> <levels> <config> <ranks> <duration>
 #   e.g. bash run_jw.sh $MPAS_DATA_ROOT/jw x1.40962 wave 60 consistent 48 15_00:00:00
 set -eu
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -42,6 +44,8 @@ case $case in
   steady) init_case=1 ;;
   wave-flat) init_case=18 ;;
   steady-flat) init_case=17 ;;
+  wave-rebal) init_case=21 ;;
+  steady-rebal) init_case=20 ;;
   *)
     [ -n "${JW_INIT_CASE:-}" ] || { echo "case is wave or steady, or set JW_INIT_CASE for $case" >&2; exit 1; }
     init_case=$JW_INIT_CASE
