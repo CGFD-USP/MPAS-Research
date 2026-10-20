@@ -69,8 +69,9 @@
                                         11 = isothermal solid-body zonal flow, steady state \newline
                                         13 = CAM-MPAS 3-d grid with specified topography and zeta levels, \newline
                                         17, 18, 19 = cases 1, 2, 3 with a flat surface (surface pressure p0 eta_s(lat) of the JW fields) \newline
-                                        20, 21, 22 = cases 1, 2, 3 with the wind rebalanced against the pressure gradient of the model"
-                     possible_values="1 -- 11, 13, or 17 -- 22"/>
+                                        20, 21, 22 = cases 1, 2, 3 with the wind rebalanced against the pressure gradient of the model \newline
+                                        23, 24, 25 = cases 20, 21, 22 with the exact edge average of the rebalanced wind on a latitude grid refined to the mesh"
+                     possible_values="1 -- 11, 13, or 17 -- 25"/>
 
                 <nml_option name="config_calendar_type" type="character" default_value="gregorian" in_defaults="false"
                      units="-"
