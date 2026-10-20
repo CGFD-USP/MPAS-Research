@@ -99,14 +99,15 @@ module init_atm_cases
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_init_case', config_init_case)
 
-      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 17 .and. config_init_case <= 22)) then
+      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 17 .and. config_init_case <= 25)) then
 
          call mpas_log_write(' Jablonowski and Williamson baroclinic wave test case ')
-         if (config_init_case == 1 .or. config_init_case == 17 .or. config_init_case == 20) call mpas_log_write(' no initial perturbation ')
-         if (config_init_case == 2 .or. config_init_case == 18 .or. config_init_case == 21) call mpas_log_write(' initial perturbation included ')
-         if (config_init_case == 3 .or. config_init_case == 19 .or. config_init_case == 22) call mpas_log_write(' normal-mode perturbation included ')
+         if (config_init_case == 1 .or. config_init_case == 17 .or. config_init_case == 20 .or. config_init_case == 23) call mpas_log_write(' no initial perturbation ')
+         if (config_init_case == 2 .or. config_init_case == 18 .or. config_init_case == 21 .or. config_init_case == 24) call mpas_log_write(' initial perturbation included ')
+         if (config_init_case == 3 .or. config_init_case == 19 .or. config_init_case == 22 .or. config_init_case == 25) call mpas_log_write(' normal-mode perturbation included ')
          if (config_init_case >= 17 .and. config_init_case <= 19) call mpas_log_write(' flat surface ')
          if (config_init_case >= 20) call mpas_log_write(' wind rebalanced against the pressure gradient of the model ')
+         if (config_init_case >= 23) call mpas_log_write(' exact edge average of the 2d wind on a 2d grid refined to the mesh ')
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
 
@@ -121,8 +122,8 @@ module init_atm_cases
             call mpas_pool_get_dimension(block_ptr % dimensions, 'nVertLevels', nVertLevels)
 
             call mpas_log_write(' calling test case setup ')
-            call init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, block_ptr % configs, &
-                                config_init_case >= 17 .and. config_init_case <= 19, config_init_case >= 20)
+            call init_atm_case_jw(domain % dminfo, mesh, nCells, nVertLevels, state, diag, block_ptr % configs, &
+                                config_init_case >= 17 .and. config_init_case <= 19, config_init_case >= 20, config_init_case >= 23)
             call decouple_variables(mesh, nCells, nVertLevels, state, diag)
             call mpas_log_write(' returned from test case setup ')
             block_ptr => block_ptr % next
@@ -466,13 +467,14 @@ module init_atm_cases
 
 !----------------------------------------------------------------------------------------------------------
 
-   subroutine init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, configs, flat_surface, model_pgf)
+   subroutine init_atm_case_jw(dminfo, mesh, nCells, nVertLevels, state, diag, configs, flat_surface, model_pgf, exact_avg)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Setup baroclinic wave test case from Jablonowski and Williamson 2008 (QJRMS)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       implicit none
 
+      type (dm_info), intent(in) :: dminfo
       type (mpas_pool_type), intent(inout) :: mesh
       integer, intent(in) :: nCells
       integer, intent(in) :: nVertLevels
@@ -537,14 +539,17 @@ module init_atm_cases
       !  storage for (lat,z) arrays for zonal velocity calculation
 
       logical, parameter :: rebalance = .true.
-      integer, parameter :: nlat=721
+      integer, parameter :: nlat_default = 721
+      ! with exact_avg the spacing of the 2d grid is at most the shortest cell distance over ratio_2d
+      real (kind=RKIND), parameter :: ratio_2d = 8.0
+      integer :: nlat
       real (kind=RKIND), dimension(nVertLevels) :: flux_zonal
-      real (kind=RKIND), dimension(nVertLevels + 1, nlat) :: zgrid_2d
-      real (kind=RKIND), dimension(nVertLevels, nlat) :: u_2d, pp_2d, rho_2d, qv_2d, etavs_2d, zz_2d
-      real (kind=RKIND), dimension(nVertLevels, nlat) :: p_2d, pb_2d, ppb_2d, rr_2d, rb_2d, tb_2d, rtb_2d
-      real (kind=RKIND), dimension(nVertLevels+1, nlat-1) :: zx_2d 
-      real (kind=RKIND), dimension(nlat) :: lat_2d
-      real (kind=RKIND) :: dlat, hx_1d, psurf_jw
+      real (kind=RKIND), dimension(:,:), allocatable :: zgrid_2d
+      real (kind=RKIND), dimension(:,:), allocatable :: u_2d, pp_2d, rho_2d, qv_2d, etavs_2d, zz_2d
+      real (kind=RKIND), dimension(:,:), allocatable :: p_2d, pb_2d, ppb_2d, rr_2d, rb_2d, tb_2d, rtb_2d
+      real (kind=RKIND), dimension(:,:), allocatable :: zx_2d
+      real (kind=RKIND), dimension(:), allocatable :: lat_2d
+      real (kind=RKIND) :: dlat, hx_1d, psurf_jw, dc_min
       real (kind=RKIND) :: z_edge, z_edge3, d2fdx2_cell1, d2fdx2_cell2
 
 !      logical, parameter :: moisture = .true.
@@ -565,7 +570,7 @@ module init_atm_cases
       real (kind=RKIND), pointer :: config_coef_3rd_order
       integer, pointer :: config_theta_adv_order
       integer, pointer :: config_init_case
-      logical, intent(in) :: flat_surface, model_pgf
+      logical, intent(in) :: flat_surface, model_pgf, exact_avg
       integer :: jw_case
 
       character (len=StrKIND), pointer :: config_interface_projection
@@ -574,6 +579,7 @@ module init_atm_cases
       jw_case = config_init_case
       if (flat_surface) jw_case = config_init_case - 16
       if (model_pgf) jw_case = config_init_case - 19
+      if (exact_avg) jw_case = config_init_case - 22
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', config_coef_3rd_order)
       call mpas_pool_get_config(configs, 'config_theta_adv_order', config_theta_adv_order)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
@@ -682,7 +688,6 @@ module init_atm_cases
       scalars(:,:,:) = 0.0
       qsat(:,:)      = 0.0
       relhum(:,:)    = 0.0
-      qv_2d(:,:)     = 0.0
 !.. end initialization of moisture.
 
       surface_pressure(:) = 0.0
@@ -837,6 +842,18 @@ module init_atm_cases
       call mpas_log_write(' grid metrics setup complete ')
 
 !**************  section for 2d (z,lat) calc for zonal velocity
+
+      nlat = nlat_default
+      if (exact_avg) then
+        call mpas_dmpar_min_real(dminfo, minval(dcEdge(1:nEdges)), dc_min)
+        nlat = max(nlat_default, 1 + ceiling(0.5*pii*r_earth*ratio_2d/dc_min))
+      end if
+      call mpas_log_write(' latitudes of the 2d grid = $i', intArgs=(/nlat/))
+      allocate(zgrid_2d(nVertLevels+1,nlat), u_2d(nVertLevels,nlat), pp_2d(nVertLevels,nlat), rho_2d(nVertLevels,nlat), &
+               qv_2d(nVertLevels,nlat), etavs_2d(nVertLevels,nlat), zz_2d(nVertLevels,nlat), p_2d(nVertLevels,nlat), &
+               pb_2d(nVertLevels,nlat), ppb_2d(nVertLevels,nlat), rr_2d(nVertLevels,nlat), rb_2d(nVertLevels,nlat), &
+               tb_2d(nVertLevels,nlat), rtb_2d(nVertLevels,nlat), zx_2d(nVertLevels+1,nlat-1), lat_2d(nlat))
+      qv_2d(:,:) = 0.0
 
       dlat = 0.5*pii/float(nlat-1)
       do i = 1,nlat
@@ -1124,7 +1141,7 @@ module init_atm_cases
 
          if (rebalance) then
 
-           call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat)
+           call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat,exact_avg)
            do k=1,nVertLevels
              fluxk = u0*flux_zonal(k)/(0.5*(rb(k,iCell1)+rb(k,iCell2)+rr(k,iCell1)+rr(k,iCell2)))
              u(k,iEdge) = fluxk + u_pert
@@ -1323,7 +1340,7 @@ module init_atm_cases
    end function jw_geopot
 
 
-   subroutine init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1_in,lat2_in,dvEdge,a,u0,nz1,nlat)
+   subroutine init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1_in,lat2_in,dvEdge,a,u0,nz1,nlat,exact_avg)
 
       implicit none
    
@@ -1332,8 +1349,9 @@ module init_atm_cases
       real (kind=RKIND), dimension(nlat), intent(in) :: lat_2d
       real (kind=RKIND), dimension(nz1), intent(out) :: flux_zonal
       real (kind=RKIND), intent(in) :: lat1_in, lat2_in, dvEdge, a, u0
+      logical, intent(in) :: exact_avg
    
-      integer :: k,i
+      integer :: k,i,i1,i2
       real (kind=RKIND) :: lat1, lat2, w1, w2
       real (kind=RKIND) :: dlat,da,db
    
@@ -1348,14 +1366,19 @@ module init_atm_cases
         flux_zonal(k) = 0.
       end do
    
-      do i=1,nlat-1
+      ! only the intervals around lat1 to lat2 can overlap
+      i1 = max(1, int(lat1/lat_2d(2)) - 1)
+      i2 = min(nlat-1, int(lat2/lat_2d(2)) + 2)
+
+      do i=i1,i2
         if( (lat1 <= lat_2d(i+1)) .and. (lat2 >= lat_2d(i)) ) then
    
         dlat = lat_2d(i+1)-lat_2d(i)
         da = (max(lat1,lat_2d(i))-lat_2d(i))/dlat
         db = (min(lat2,lat_2d(i+1))-lat_2d(i))/dlat
-        w1 = (db-da) -0.5*(db-da)**2
         w2 = 0.5*(db-da)**2
+        if (exact_avg) w2 = 0.5*(db**2-da**2)
+        w1 = (db-da) - w2
    
         do k=1,nz1
           flux_zonal(k) = flux_zonal(k) + w1*u_2d(k,i) + w2*u_2d(k,i+1)
