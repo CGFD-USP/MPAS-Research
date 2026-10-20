@@ -6,6 +6,9 @@
 : "${MPAS_BIND:=$MPAS_DATA_ROOT}"
 : "${MPAS_NODE_CORES:=48}"
 : "${MPAS_SCHEDULER:=pbs}"
+# ncpus of a whole-node job: all threads of the compute nodes (96), so that it never lands on the
+# smaller nodes outside the profile (kurama has 64)
+: "${MPAS_NODE_NCPUS:=96}"
 # the image's mpirun must not see the PBS job, whose node file it cannot read
 : "${MPAS_HIDE_ENV:=PBS_ENVIRONMENT PBS_JOBID PBS_NODEFILE}"
 case ":$PATH:" in

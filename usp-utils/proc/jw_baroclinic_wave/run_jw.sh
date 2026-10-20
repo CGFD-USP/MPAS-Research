@@ -26,7 +26,9 @@
 # step, $JW_HORIZ_MIXING the horizontal mixing (default 2d_smagorinsky),
 # $JW_SMDIV the divergence damping (default 0.1), and $JW_HISTORY_FIELDS and
 # $JW_DIAG_FIELDS the fields of the two output streams. $JW_NHYD_EXTRA (namelist
-# lines) is appended to &nhyd_model, e.g. for options of the dynamics.
+# lines) is appended to &nhyd_model, e.g. for options of the dynamics, and $JW_RUN_TAG (e.g. +ep) is
+# added to the name of the run folder, so that runs of one configuration with different options
+# share the initial state.
 # Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady|wave-flat|steady-flat|wave-rebal|steady-rebal> <levels> <config> <ranks> <duration>
 #   e.g. bash run_jw.sh $MPAS_DATA_ROOT/jw x1.40962 wave 60 consistent 48 15_00:00:00
 set -eu
@@ -68,7 +70,7 @@ fi
 
 cdir=$root/$mesh/${case}_L$levels
 idir=$cdir/init
-rdir=$cdir/${config}_np$ranks
+rdir=$cdir/${config}${JW_RUN_TAG:-}_np$ranks
 # duration in seconds of D_hh:mm:ss
 seconds() {
   local d=0 t=$1 h m sec

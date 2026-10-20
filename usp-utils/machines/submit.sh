@@ -6,6 +6,8 @@
 #   MPAS_JOB_NAME   job name (default mpas)
 #   MPAS_JOB_NODES  nodes of a PBS job (default 1), each with <cores> cores and
 #                   used whole when more than one
+#   MPAS_NODE_NCPUS ncpus requested by a job that uses all the cores of a node (profile; default
+#                   the cores)
 #   MPAS_QSUB_OPTS  further qsub options, e.g. "-l walltime=24:00:00 -l place=excl"
 # Usage: bash usp-utils/machines/submit.sh <cores> <log> <command ...>
 #   e.g. bash usp-utils/machines/submit.sh 4 smoke.log bash scripts/jw/smoke.sh
@@ -25,11 +27,13 @@ case $MPAS_SCHEDULER in
   pbs)
     nodes=${MPAS_JOB_NODES:-1}
     place=()
+    ncpus=$cores
+    [ "$cores" -ne "$MPAS_NODE_CORES" ] || ncpus=${MPAS_NODE_NCPUS:-$cores}
     [ "$nodes" -eq 1 ] || place=(-l place=scatter:excl)
     # a job script on stdin, since kami fails jobs given as "qsub -- <executable>"
     # shellcheck disable=SC2086
     id=$(printf '#!/bin/bash\n%s\n' "$job" | qsub -N "${MPAS_JOB_NAME:-mpas}" \
-      -l "select=$nodes:ncpus=$cores:mpiprocs=$cores" "${place[@]}" -j oe ${MPAS_QSUB_OPTS:-})
+      -l "select=$nodes:ncpus=$ncpus:mpiprocs=$cores" "${place[@]}" -j oe ${MPAS_QSUB_OPTS:-})
     echo "job $id, log $log"
     ;;
   *)

@@ -7,6 +7,8 @@
 # (create-voronoi-operator.jl), METIS partitions of the regenerated mesh for the
 # given rank counts, and PROVENANCE. Steps already done are skipped. Runs the
 # tools in the MPAS image, on any machine with a profile in usp-utils/machines.
+# LSQ2_PROJECT (a Julia project folder) makes operators-lsq2.nc with the
+# VoronoiOperators of that project instead of the shared environment.
 # Usage: bash prepare_ncar_mesh.sh <mesh> [ranks ...]   e.g. x1.40962 48
 set -eu
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -18,7 +20,7 @@ shift
 url=https://www2.mmm.ucar.edu/projects/mpas/atmosphere_meshes/$mesh.tar.gz
 run=$MPAS_ROOT/usp-utils/install/container/run.sh
 sif=${MPAS_SIF:-$MPAS_ROOT/.apptainer/mpas.sif}
-jl() { bash "$run" julia --project=@cgfd-usp-mpas --threads=auto "$@"; }
+jl() { bash "$run" julia --project="${JL_PROJECT:-@cgfd-usp-mpas}" --threads=auto "$@"; }
 
 dir=$MPAS_GRIDS/$mesh
 mkdir -p "$dir"
@@ -50,7 +52,7 @@ ops() {
   made+=("create-voronoi-operator.jl $regen.nc ${*:2} $1")
 }
 ops operators-consistent.nc -t Peixoto -c Perot -v Perot
-ops operators-lsq2.nc -t Peixoto -c LSq2 -v LSq2
+JL_PROJECT=${LSQ2_PROJECT:-} ops operators-lsq2.nc -t Peixoto -c LSq2 -v LSq2
 rmdir .work
 
 for p in "$@"; do
@@ -90,6 +92,10 @@ if [ ${#made[@]} -gt 0 ]; then
     fi
     printf 'made       %s\n' "${made[@]}"
     echo "image      $sif ($(stat -c '%s bytes, %y' "$sif"))"
+    if [ -n "${LSQ2_PROJECT:-}" ]; then
+      vo=$(sed -n '/^\[\[deps.VoronoiOperators\]\]/,/^$/s/^path = "\(.*\)"/\1/p' "$LSQ2_PROJECT/Manifest.toml")
+      echo "julia      operators-lsq2.nc: VoronoiOperators.jl $(git -C "$vo" rev-parse HEAD) of $LSQ2_PROJECT"
+    fi
     for p in "$MPAS_ROOT"/external/*/; do
       [ -d "$p/.git" ] || continue
       dirty=$(git -C "$p" status --porcelain --untracked-files=no | grep -q . && echo " +uncommitted" || true)
