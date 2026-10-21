@@ -284,6 +284,7 @@ def jigsaw_gen_icos_grid(basename="mesh", level=4):
     opts.mesh_dims = +2                 # 2-dim. simplexes
     opts.optm_iter = +5120
     opts.optm_qtol = +1.0E-08
+    opts.optm_kern = "cvt+dqdx"         # centroidal Voronoi, the SCVT of NCAR's x1 meshes
     
     jig.cmd.icosahedron(opts, level, icos)    
 
