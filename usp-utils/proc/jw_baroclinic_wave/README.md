@@ -86,6 +86,9 @@ $MPAS_GRIDS/<mesh>/              NCAR grid and partitions, <mesh>.grid.regen.nc 
 | `lsq2-vke` | `operators-lsq2.nc` | all four |
 | `trsk-newke-consistent` | `operators-consistent.nc` | last three |
 | `trsk-newke-lsq2` | `operators-lsq2.nc` | last three |
+| `trsk-cellke-consistent` | `operators-consistent.nc` | second and third |
+| `trsk-cellke-lsq2` | `operators-lsq2.nc` | second and third |
+| `consistent-trskke` | `operators-consistent.nc` | first |
 
 ## Choices
 

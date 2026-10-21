@@ -43,6 +43,9 @@ jw_config() {
     lsq2-vke) echo operators-lsq2.nc true true true true ;;
     trsk-newke-consistent) echo operators-consistent.nc false true true true ;;
     trsk-newke-lsq2) echo operators-lsq2.nc false true true true ;;
+    trsk-cellke-consistent) echo operators-consistent.nc false true true false ;;
+    trsk-cellke-lsq2) echo operators-lsq2.nc false true true false ;;
+    consistent-trskke) echo operators-consistent.nc true false false false ;;
     *) echo "unknown configuration $1" >&2; return 1 ;;
   esac
 }
