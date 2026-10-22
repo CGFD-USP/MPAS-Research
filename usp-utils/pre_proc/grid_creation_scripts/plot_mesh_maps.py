@@ -29,7 +29,7 @@ SERIES = (("", "frontal Delaunay", "#d95f02"), ("-rings", "start: latitude rings
           ("-geo", "start: icosahedral lattices", "#e6ab02"))
 NCAR = ("NCAR x4.1572866", "#3d3d3a")
 # lon0, lon1, lat0, lat1 (degrees) of the cell windows, across the northern band
-WINDOWS = {30: (5.0, 17.0, 18.0, 48.0), 15: (5.0, 11.0, 24.0, 42.0)}
+WINDOWS = {60: (5.0, 29.0, 6.0, 66.0), 30: (5.0, 17.0, 18.0, 48.0), 15: (5.0, 11.0, 24.0, 42.0)}
 LAT_BINS = np.arange(0.0, 90.0 + 1.0, 1.0)
 
 
@@ -90,9 +90,10 @@ def polygons(m, box):
     return polys, sel
 
 
-def fig_cells(root, out, r):
+def fig_cells(root, out, r, ms=None, name=None, title=None):
+    """Cell maps of the meshes ms [(grid file, label, colour)], by default the start-set family."""
     box = WINDOWS[r]
-    ms = meshes(root, r)
+    ms = ms or meshes(root, r)
     fig, ax = plt.subplots(2, len(ms), figsize=(WIDTH, 6.4), sharex=True, sharey=True, constrained_layout=True)
     fields = (("dev", plt.cm.RdBu_r, (-0.15, 0.15), "spacing over design $- 1$"),
               ("eps", plt.cm.magma_r, (0.0, 0.08), "largest $\\varepsilon$ of the cell edges"))
@@ -124,8 +125,8 @@ def fig_cells(root, out, r):
     for a in ax[:, 0]:
         a.set_ylabel("latitude (deg)")
     fig.legend(*ax[0, 0].get_legend_handles_labels(), loc="outside lower center", ncol=3, markerscale=2)
-    fig.suptitle("%g-%g km meshes, cells across the northern transition band (dashed: band edges)" % (4 * r, r))
-    fig.savefig(os.path.join(out, "start_cells_%g-%gkm.png" % (4 * r, r)))
+    fig.suptitle(title or "%g-%g km meshes, cells across the northern transition band (dashed: band edges)" % (4 * r, r))
+    fig.savefig(os.path.join(out, name or "start_cells_%g-%gkm.png" % (4 * r, r)))
     plt.close(fig)
 
 

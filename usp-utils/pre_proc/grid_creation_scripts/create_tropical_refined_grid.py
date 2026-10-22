@@ -17,6 +17,14 @@ Usage (in the MPAS image, see usp-utils/install/container/run.sh):
 With --band-ref the transition width scales with the fine spacing instead (the same number of
 cells across the band at every level), and the mesh is named tropical-fixcells-<coarse>-<fine>km.
 
+With --start continuation JIGSAW starts from the defect-free icosahedral lattice with the cell count of the design and
+optimises it through a sequence of cell width functions, from uniform to the design, each started from the previous mesh.
+
+With --start mapped JIGSAW optimises that lattice with its latitudes moved to follow the design.
+
+With --start coarsen JIGSAW optimises the cell centres of the --source mesh after --levels decimations that double the
+spacing (the design must be the one of the coarser mesh).
+
 With --start rings, icos or geo JIGSAW does not mesh from scratch but optimises a given almost regular point set
 (tropical_start_set.py) and its Delaunay triangulation, which keeps the hexagonal connectivity of the set.
 The defaults then are mesh_iter 0, merge and split of cells allowed, the CVT kernel (override with --mesh-iter and --jig),
@@ -72,16 +80,33 @@ def mesh_name(fine, ratio=RATIO, band_ref=None):
     return "tropical-%s%g-%gkm" % ("" if band_ref is None else "fixcells-", ratio * fine, fine)
 
 
+def continuation_params(steps, power):
+    """Parameters t_k, k = 1..steps, of the continuation from the uniform mesh (t = 0) to the design (t = 1).
+    power > 1 makes the steps smaller towards the end."""
+    return [1.0 - (1.0 - k / steps) ** power for k in range(1, steps + 1)]
+
+
+def write_hfun(jig, path, width_of_lat, fine, ratio, width):
+    _, lon, lat = cell_width_grid(fine, ratio, width)
+    cw = np.tile(width_of_lat(lat)[:, None], (1, lon.size))
+    hmat = jig.jigsaw_msh_t()
+    hmat.mshID = "ELLIPSOID-GRID"
+    hmat.xgrid, hmat.ygrid, hmat.value = np.radians(lon), np.radians(lat), cw
+    jig.savemsh(path, hmat)
+
+
+def count_cells(jig, mesh_file):
+    mesh = jig.jigsaw_msh_t()
+    jig.loadmsh(mesh_file, mesh)
+    return int(mesh.vert3.size)
+
+
 def run_jigsaw(base, fine, ratio, width, args):
     import jigsawpy as jig
     opts = jig.jigsaw_jig_t()
     opts.geom_file, opts.jcfg_file = base + ".msh", base + ".jig"
     opts.mesh_file, opts.hfun_file = base + "-MESH.msh", base + "-HFUN.msh"
-    cw, lon, lat = cell_width_grid(fine, ratio, width)
-    hmat = jig.jigsaw_msh_t()
-    hmat.mshID = "ELLIPSOID-GRID"
-    hmat.xgrid, hmat.ygrid, hmat.value = np.radians(lon), np.radians(lat), cw
-    jig.savemsh(opts.hfun_file, hmat)
+    design = lambda lat: cell_width(lat, fine, ratio, width)
     geom = jig.jigsaw_msh_t()
     geom.mshID = "ELLIPSOID-MESH"
     geom.radii = EARTH_RADIUS_KM * np.ones(3, float)
@@ -93,17 +118,36 @@ def run_jigsaw(base, fine, ratio, width, args):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import tropical_start_set
         opts.init_file = base + "-INIT.msh"
-        jig.savemsh(opts.init_file, tropical_start_set.start_mesh(
-            args.start, lambda lat: cell_width(lat, fine, ratio, width), EARTH_RADIUS_KM))
+        jig.savemsh(opts.init_file, tropical_start_set.start_mesh(args.start, design, EARTH_RADIUS_KM, args.source, args.levels, args.direction))
         opts.optm_kern, opts.optm_zip_, opts.optm_div_ = "cvt+dqdx", True, True
     opts.optm_iter, opts.optm_qlim, opts.optm_qtol = args.optm_iter, args.qlim, args.qtol
     opts.numthread = args.threads
     for key, value in args.jig:
         setattr(opts, key, value)
     opts.verbosity = +1
-    jig.savejig(opts.jcfg_file, opts)
-    subprocess.check_call(["jigsaw", opts.jcfg_file])
-    return opts.mesh_file
+    steps_log = []
+    if args.start == "continuation":
+        steps = continuation_params(args.steps, args.power)
+        # passes (t, exponent of the cell width, merge and split)
+        plan = [(t, 1.0, True) for t in steps] if not args.pre_power else \
+            [(t, args.pre_power, False) for t in steps] + [(1.0, 1.0, True)]
+    else:
+        plan = [(1.0, 1.0, True)]
+    for k, (t, expo, remesh) in enumerate(plan):
+        t0 = time.time()
+        width_t = design if args.start != "continuation" else tropical_start_set.blend_width(design, EARTH_RADIUS_KM, t, expo)
+        write_hfun(jig, opts.hfun_file, width_t, fine, ratio, width)
+        if args.start == "continuation":
+            opts.optm_zip_ = opts.optm_div_ = remesh
+        jig.savejig(opts.jcfg_file, opts)
+        subprocess.check_call(["jigsaw", opts.jcfg_file])
+        if len(plan) > 1:
+            steps_log.append({"t": round(t, 6), "power": expo, "remesh": remesh, "s": round(time.time() - t0, 1),
+                              "cells": count_cells(jig, opts.mesh_file)})
+            print("pass %d/%d %s" % (k + 1, len(plan), steps_log[-1]), flush=True)
+            if k + 1 < len(plan):
+                shutil.copy(opts.mesh_file, opts.init_file)
+    return opts.mesh_file, steps_log
 
 
 def convert_to_mpas(mesh_file, out_dir, base):
@@ -145,7 +189,7 @@ def main(args):
            "start": args.start, "jigsaw": {"mesh_iter": args.mesh_iter, "optm_iter": args.optm_iter, "optm_qlim": args.qlim,
                       "optm_qtol": args.qtol, "numthread": args.threads, **dict(args.jig)}}
     t0 = time.time()
-    mesh_file = run_jigsaw(base, fine, args.ratio, width, args)
+    mesh_file, log["steps"] = run_jigsaw(base, fine, args.ratio, width, args)
     log["jigsaw_s"], log["jigsaw_peak_gb"] = round(time.time() - t0, 1), round(peak_gb(), 2)
     t1 = time.time()
     convert_to_mpas(mesh_file, out_dir, base)
@@ -178,10 +222,21 @@ if __name__ == "__main__":
     p.add_argument("--name", help="mesh name (default tropical-<coarse>-<fine>km)")
     p.add_argument("--optm-iter", dest="optm_iter", type=int, default=5000000,
                    help="maximum JIGSAW optimisation iterations")
-    p.add_argument("--start", choices=("frontal", "rings", "icos", "geo"), default="frontal",
+    p.add_argument("--start", choices=("frontal", "rings", "icos", "geo", "continuation", "mapped", "coarsen"), default="frontal",
                    help="frontal: JIGSAW meshes from scratch. rings, icos or geo: JIGSAW optimises an almost regular "
                         "point set (reduced latitude-longitude rings, bisected icosahedron points kept by the density, "
-                        "or icosahedral lattices of stepped frequency)")
+                        "or icosahedral lattices of stepped frequency. continuation: the icosahedral lattice of the "
+                        "design's cell count, optimised through --steps cell widths from uniform to the design)")
+    p.add_argument("--source", help="--start coarsen: MPAS grid file whose cell centres are decimated")
+    p.add_argument("--direction", type=float, nargs=3, default=(1.0, 0.0, 0.0), metavar=("X", "Y", "Z"),
+                   help="--start coarsen: the decimation starts at the cell closest to this direction (default 1 0 0)")
+    p.add_argument("--levels", type=int, default=1, help="--start coarsen: number of decimations, each doubling the spacing")
+    p.add_argument("--pre-power", dest="pre_power", type=float, default=0.0,
+                   help="--start continuation: first run the steps with merge and split off and the cell width raised to this "
+                        "power (4 makes the CVT kernel realise the design), then one pass with the design (default 0: off)")
+    p.add_argument("--steps", type=int, default=10, help="--start continuation: number of density steps (default 10)")
+    p.add_argument("--power", type=float, default=1.0,
+                   help="--start continuation: step k has t = 1 - (1 - k/steps)^power, so power > 1 ends with small steps")
     p.add_argument("--mesh-iter", dest="mesh_iter", type=int,
                    help="maximum JIGSAW meshing iterations (default 5000000, 0 with another --start)")
     p.add_argument("--qlim", type=float, default=0.9375, help="JIGSAW optm_qlim, quality threshold")
