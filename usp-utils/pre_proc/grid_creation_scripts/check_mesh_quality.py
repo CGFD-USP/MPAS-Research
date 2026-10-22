@@ -68,6 +68,24 @@ def ordering_fractions(ds):
     return res
 
 
+def centroid_offset(xyz, xv, voc, nec):
+    """Distance from each generator to the centroid of its Voronoi cell (fan of chord triangles, projected to the
+    sphere) over the square root of the cell area, both on the unit sphere."""
+    out = np.empty(len(xyz))
+    for i in range(0, len(xyz), CHUNK // 4):
+        sl = slice(i, i + CHUNK // 4)
+        c, n, v = xyz[sl], nec[sl], xv[voc[sl]]
+        s, area = np.zeros_like(c), np.zeros(len(c))
+        for k in range(v.shape[1]):
+            a, b = v[:, k], v[np.arange(len(c)), np.where(k + 1 < n, k + 1, 0)]
+            w = 0.5 * np.linalg.norm(np.cross(a - c, b - c), axis=1) * (k < n)
+            s += w[:, None] * (c + a + b) / 3.0
+            area += w
+        cen = s / np.linalg.norm(s, axis=1)[:, None]
+        out[sl] = np.linalg.norm(cen - c, axis=1) / np.sqrt(area)
+    return out
+
+
 def measure(path, fine, ratio=RATIO, width=WIDTH):
     ds = netCDF4.Dataset(path)
     radius = float(ds.sphere_radius) if "sphere_radius" in ds.ncattrs() else 1.0
@@ -145,6 +163,8 @@ def measure(path, fine, ratio=RATIO, width=WIDTH):
     n_lat = np.bincount(lb, minlength=len(LAT_BINS) - 1)
     eps_lat[:, 0] = np.sqrt(np.bincount(lb, eps ** 2, len(n_lat)) / np.maximum(n_lat, 1))
     del xt, xm, xe
+    off = centroid_offset(xyz, xv, read(ds, "verticesOnCell") - 1, nec)
+    sc["centroid_offset"] = {"rms": float(np.sqrt((off ** 2).mean())), "max": float(off.max())}
     sc["dv_over_dc"] = {"min": float((dv / dc).min()), "median": float(np.median(dv / dc)),
                         "max": float((dv / dc).max())}
     del xv, mid, d, t
