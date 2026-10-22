@@ -15,6 +15,7 @@
     <package name="custom_weightsOnEdge" description="Read custom weightsOnEdge from custom operators stream NetCDF file"/>
     <package name="custom_coeffs_reconstruct" description="Read custom coefs_reconstruct from custom operators stream NetCDF file"/>
     <package name="custom_edge_midpoint_flux" description="Read coeffs_edge_midpoint_reconstruct from custom operators stream NetCDF file"/>
+    <package name="custom_edge_point_u" description="Read coeffs_edge_point_u from custom operators stream NetCDF file"/>
     <package name="custom_vertex_coeffs_reconstruct" description="Read custom vertex_coefs_reconstruct from custom operators stream NetCDF file"/>
 </packages>
 
@@ -31,6 +32,7 @@
         <var name="coeffs_cell_vel_reconstruct" packages="custom_coeffs_reconstruct"/>
         <var name="coeffs_vertex_vel_reconstruct" packages="custom_vertex_coeffs_reconstruct"/>
         <var name="coeffs_edge_midpoint_reconstruct" packages="custom_edge_midpoint_flux"/>
+        <var name="coeffs_edge_point_u" packages="custom_edge_point_u"/>
 
     </stream>
 
@@ -49,6 +51,10 @@
     <var name="coeffs_edge_midpoint_reconstruct" type="real" dimensions="trueMaxEdgesP1 nEdges" units="unitless"
         description="Weights of the fluxes at xEdge of an edge and of its edgesOnEdge in the flux at the Voronoi edge midpoint"
         packages="custom_edge_midpoint_flux"/>
+
+    <var name="coeffs_edge_point_u" type="real" dimensions="trueMaxEdgesP1 nEdges" units="unitless"
+        description="Weights of the edge-mean normal velocities of an edge and of its edgesOnEdge in the point value at xEdge"
+        packages="custom_edge_point_u"/>
 
     <var name="coeffs_vertex_vel_reconstruct" type="real" dimensions="R3 vertexDegree nVertices" units="unitless"
         description="Coefficients to reconstruct velocity vectors at vertices"

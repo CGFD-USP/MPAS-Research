@@ -1964,7 +1964,7 @@ module atm_time_integration
       logical, pointer :: config_positive_definite
       logical, pointer :: config_monotonic
       logical, pointer :: config_gpu_aware_mpi
-      logical, pointer :: config_edge_midpoint_flux
+      logical, pointer :: config_edge_midpoint_flux, config_edge_point_u
       character (len=StrKIND), pointer :: config_smdiv_scheme
       character (len=StrKIND), pointer :: config_microp_scheme
       character (len=StrKIND), pointer :: config_convection_scheme
@@ -2013,6 +2013,7 @@ module atm_time_integration
       call mpas_pool_get_config(block % configs, 'config_smdiv_scheme', config_smdiv_scheme)
       call mpas_pool_get_config(block % configs, 'config_gpu_aware_mpi', config_gpu_aware_mpi)
       call mpas_pool_get_config(block % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      call mpas_pool_get_config(block % configs, 'config_edge_point_u', config_edge_point_u)
       call mpas_pool_get_config(block % configs, 'config_IAU_option', config_IAU_option)
       !  config variables for dynamics-transport splitting, WCS 18 November 2014
       call mpas_pool_get_config(block % configs, 'config_split_dynamics_transport', config_split_dynamics_transport)
@@ -2291,7 +2292,7 @@ module atm_time_integration
                call mpas_timer_start('atm_compute_edge_fluxes')
 !$OMP PARALLEL DO
                do thread=1,nThreads
-                  call atm_compute_edge_fluxes( state, diag, mesh, nVertLevels, rk_step, &
+                  call atm_compute_edge_fluxes( state, diag, mesh, nVertLevels, rk_step, config_edge_point_u, &
                                                 edgeThreadStart(thread), edgeThreadEnd(thread) )
                end do
 !$OMP END PARALLEL DO
@@ -6015,8 +6016,8 @@ module atm_time_integration
 
       real (kind=RKIND), pointer :: r_earth
       real (kind=RKIND), dimension(:,:), pointer :: ur_cell, vr_cell
-      logical, pointer :: config_edge_midpoint_flux
-      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint_reconstruct, flux_theta_edge, flux_w_edge
+      logical, pointer :: config_edge_midpoint_flux, config_edge_point_u
+      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint_reconstruct, flux_theta_edge, flux_w_edge, ru_em
 
       real (kind=RKIND), dimension(:,:), pointer :: deformation_coef_c2, deformation_coef_s2, deformation_coef_cs
       real (kind=RKIND), dimension(:,:), pointer :: deformation_coef_c, deformation_coef_s
@@ -6214,9 +6215,16 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'adv_coefs_3rd', adv_coefs_3rd)
 
       call mpas_pool_get_config(configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      call mpas_pool_get_config(configs, 'config_edge_point_u', config_edge_point_u)
       call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_reconstruct', coeffs_edge_midpoint_reconstruct)
       call mpas_pool_get_array(diag, 'flux_theta_edge', flux_theta_edge)
       call mpas_pool_get_array(diag, 'flux_w_edge', flux_w_edge)
+      if (config_edge_point_u) then
+         call mpas_pool_get_array(diag, 'u_point', u)
+         call mpas_pool_get_array(diag, 'ru_point', ru_em)
+      else
+         ru_em => ru
+      end if
 
       call mpas_pool_get_array(mesh, 'cf1', cf1)
       call mpas_pool_get_array(mesh, 'cf2', cf2)
@@ -6229,7 +6237,7 @@ module atm_time_integration
          nCellsSolve, nEdgesSolve, vertexDegree, maxEdges, maxEdges2, num_scalars, index_qv, index_qc, moist_start, moist_end, &
          tend_scalars, &
          fEdge, dvEdge, dcEdge, invDcEdge, invDvEdge, invAreaCell, invAreaTriangle, meshScalingDel2, meshScalingDel4, &
-         weightsOnEdge, zgrid, rho_edge, rho_zz, ru, u, v, tend_u, &
+         weightsOnEdge, zgrid, rho_edge, rho_zz, ru, ru_em, u, v, tend_u, &
          divergence, vorticity, ke, pv_edge, theta_m, rw, tend_rho, &
          rt_diabatic_tend, tend_theta, tend_w, w, cqw, rb, rr, pp, pressure_b, zz, zxu, cqu, & 
          h_divergence, bn2, eddy_visc_horz, eddy_visc_vert, index_tke, &
@@ -6265,7 +6273,7 @@ module atm_time_integration
       nCellsSolve, nEdgesSolve, vertexDegree, maxEdges_dummy, maxEdges2_dummy, num_scalars_dummy, index_qv, index_qc, moist_start, moist_end, &
       tend_scalars, &
       fEdge, dvEdge, dcEdge, invDcEdge, invDvEdge, invAreaCell, invAreaTriangle, meshScalingDel2, meshScalingDel4, &
-      weightsOnEdge, zgrid, rho_edge, rho_zz, ru, u, v, tend_u, &
+      weightsOnEdge, zgrid, rho_edge, rho_zz, ru, ru_em, u, v, tend_u, &
       divergence, vorticity, ke, pv_edge, theta_m, rw, tend_rho, &
       rt_diabatic_tend, tend_theta, tend_w, w, cqw, rb, rr, pp, pressure_b, zz, zxu, cqu, & 
       h_divergence, bn2, eddy_visc_horz, eddy_visc_vert, index_tke, &
@@ -6316,6 +6324,7 @@ module atm_time_integration
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: rho_edge
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: rho_zz
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: ru
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: ru_em
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: v
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: tend_u
@@ -6640,7 +6649,7 @@ module atm_time_integration
               end do
               do i = 1,nEdgesOnCell(iCell)
                  iEdge = edgesOnCell(i,iCell)
-                 call atm_edge_midpoint_flux(ru, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs_edge_midpoint_reconstruct, fmid)
+                 call atm_edge_stencil_sum(ru_em, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs_edge_midpoint_reconstruct, fmid)
                  do k = 1,nVertLevels
                     tend_rho(k,iCell) = tend_rho(k,iCell) - edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * fmid(k) * invAreaCell(iCell)
                  end do
@@ -6844,7 +6853,7 @@ module atm_time_integration
             edge_sign = edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * 0.5
 
             if (config_edge_midpoint_flux) then
-               call atm_edge_midpoint_flux(flux_w_edge, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs_edge_midpoint_reconstruct, fmid)
+               call atm_edge_stencil_sum(flux_w_edge, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs_edge_midpoint_reconstruct, fmid)
                do k=2,nVertLevels
                   tend_w(k,iCell) = tend_w(k,iCell) - edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * fmid(k)
                end do
@@ -7010,7 +7019,7 @@ module atm_time_integration
             iEdge = edgesOnCell(i,iCell)
 
             if (config_edge_midpoint_flux) then
-               call atm_edge_midpoint_flux(flux_theta_edge, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs_edge_midpoint_reconstruct, fmid)
+               call atm_edge_stencil_sum(flux_theta_edge, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs_edge_midpoint_reconstruct, fmid)
                do k=1,nVertLevels
                   tend_theta(k,iCell) = tend_theta(k,iCell) - edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * fmid(k)
                end do
@@ -7160,14 +7169,15 @@ module atm_time_integration
 
 
    !----------------------------------------------------------------------
-   !  routine atm_edge_midpoint_flux
+   !  routine atm_edge_stencil_sum
    !
-   !> \brief Flux per unit length at the Voronoi edge midpoint of an edge
+   !> \brief Weighted sum of an edge field over the edge and its edgesOnEdge
    !> \details
-   !>  fmid = c(1) flux(iEdge) + sum_j c(j+1) flux(edgesOnEdge(j,iEdge)), with c the
-   !>  coeffs_edge_midpoint_reconstruct of the edge.
+   !>  fmid = c(1) flux(iEdge) + sum_j c(j+1) flux(edgesOnEdge(j,iEdge)), with c the weights
+   !>  of the edge: coeffs_edge_midpoint_reconstruct (flux at the Voronoi edge midpoint) or
+   !>  coeffs_edge_point_u (point value of the velocity at xEdge).
    !----------------------------------------------------------------------
-   subroutine atm_edge_midpoint_flux(flux, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs, fmid)
+   subroutine atm_edge_stencil_sum(flux, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs, fmid)
 
       implicit none
 
@@ -7186,7 +7196,7 @@ module atm_time_integration
          fmid(1:nLev) = fmid(1:nLev) + coeffs(j+1,iEdge) * flux(1:nLev,edgesOnEdge(j,iEdge))
       end do
 
-   end subroutine atm_edge_midpoint_flux
+   end subroutine atm_edge_stencil_sum
 
 
    !----------------------------------------------------------------------
@@ -7198,7 +7208,7 @@ module atm_time_integration
    !>  midpoint of the edges of the owned cells has the neighbouring edges. The caller
    !>  exchanges the halos.
    !----------------------------------------------------------------------
-   subroutine atm_compute_edge_fluxes(state, diag, mesh, nVertLevels, rk_step, edgeStart, edgeEnd)
+   subroutine atm_compute_edge_fluxes(state, diag, mesh, nVertLevels, rk_step, edge_point_u, edgeStart, edgeEnd)
 
       implicit none
 
@@ -7206,11 +7216,12 @@ module atm_time_integration
       type (mpas_pool_type), intent(inout) :: diag
       type (mpas_pool_type), intent(in) :: mesh
       integer, intent(in) :: nVertLevels, rk_step, edgeStart, edgeEnd
+      logical, intent(in) :: edge_point_u
 
       integer, dimension(:,:), pointer :: cellsOnEdge, advCellsForEdge
       integer, dimension(:), pointer :: nAdvCellsForEdge
       real (kind=RKIND), dimension(:,:), pointer :: adv_coefs, adv_coefs_3rd, ru, ru_save, theta_m, theta_m_save, w, &
-                                                    flux_theta_edge, flux_w_edge
+                                                    flux_theta_edge, flux_w_edge, rho_edge, u_point, ru_point, ru_f
       real (kind=RKIND), dimension(:), pointer :: invDvEdge, fzm, fzp
 
       integer :: iEdge, j, k, iAdvCell, cell1, cell2
@@ -7232,24 +7243,33 @@ module atm_time_integration
       call mpas_pool_get_array(state, 'w', w, 2)
       call mpas_pool_get_array(diag, 'flux_theta_edge', flux_theta_edge)
       call mpas_pool_get_array(diag, 'flux_w_edge', flux_w_edge)
+      if (edge_point_u) then
+         call mpas_pool_get_array(diag, 'rho_edge', rho_edge)
+         call mpas_pool_get_array(diag, 'u_point', u_point)
+         call mpas_pool_get_array(diag, 'ru_point', ru_point)
+         ru_f => ru_point
+      else
+         ru_f => ru
+      end if
 
       do iEdge = edgeStart, edgeEnd
+         if (edge_point_u) ru_point(1:nVertLevels,iEdge) = rho_edge(1:nVertLevels,iEdge) * u_point(1:nVertLevels,iEdge)
          ft(1:nVertLevels) = 0.0_RKIND
          fw(1:nVertLevels+1) = 0.0_RKIND
          do j = 1, nAdvCellsForEdge(iEdge)
             iAdvCell = advCellsForEdge(j,iEdge)
             do k = 1, nVertLevels
-               scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru(k,iEdge)) * adv_coefs_3rd(j,iEdge)
+               scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru_f(k,iEdge)) * adv_coefs_3rd(j,iEdge)
                ft(k) = ft(k) + scalar_weight * theta_m(k,iAdvCell)
             end do
             do k = 2, nVertLevels
-               ru_edge_w = fzm(k)*ru(k,iEdge) + fzp(k)*ru(k-1,iEdge)
+               ru_edge_w = fzm(k)*ru_f(k,iEdge) + fzp(k)*ru_f(k-1,iEdge)
                scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru_edge_w) * adv_coefs_3rd(j,iEdge)
                fw(k) = fw(k) + scalar_weight * w(k,iAdvCell)
             end do
          end do
          do k = 1, nVertLevels
-            flux_theta_edge(k,iEdge) = ru(k,iEdge) * ft(k) * invDvEdge(iEdge)
+            flux_theta_edge(k,iEdge) = ru_f(k,iEdge) * ft(k) * invDvEdge(iEdge)
          end do
          if (rk_step > 1) then
             cell1 = cellsOnEdge(1,iEdge)
@@ -7262,7 +7282,7 @@ module atm_time_integration
          flux_w_edge(1,iEdge) = 0.0_RKIND
          flux_w_edge(nVertLevels+1,iEdge) = 0.0_RKIND
          do k = 2, nVertLevels
-            flux_w_edge(k,iEdge) = (fzm(k)*ru(k,iEdge) + fzp(k)*ru(k-1,iEdge)) * fw(k) * invDvEdge(iEdge)
+            flux_w_edge(k,iEdge) = (fzm(k)*ru_f(k,iEdge) + fzp(k)*ru_f(k-1,iEdge)) * fw(k) * invDvEdge(iEdge)
          end do
       end do
 
@@ -7305,12 +7325,21 @@ module atm_time_integration
 
       real (kind=RKIND), pointer :: config_apvm_upwinding
       real (kind=RKIND), dimension(:,:,:), pointer :: vertex_coeffs_reconstruct
+      logical, pointer :: config_edge_point_u
+      real (kind=RKIND), dimension(:,:), pointer :: u_pt, coeffs_edge_point_u
 
 
       call mpas_pool_get_config(configs, 'config_apvm_upwinding', config_apvm_upwinding)
+      call mpas_pool_get_config(configs, 'config_edge_point_u', config_edge_point_u)
 
       call mpas_pool_get_array(state, 'rho_zz', h, time_lev)
       call mpas_pool_get_array(state, 'u', u, time_lev)
+      if (config_edge_point_u) then
+         call mpas_pool_get_array(diag, 'u_point', u_pt)
+         call mpas_pool_get_array(mesh, 'coeffs_edge_point_u', coeffs_edge_point_u)
+      else
+         u_pt => u
+      end if
 
       call mpas_pool_get_array(diag, 'v', v)
       call mpas_pool_get_array(diag, 'rho_edge', h_edge)
@@ -7360,10 +7389,11 @@ module atm_time_integration
       call atm_compute_solve_diagnostics_work(nCells, nEdges, nVertices, &
                vertexDegree, dt, config_apvm_upwinding, &
                fVertex, fEdge, invAreaTriangle, invAreaCell, dvEdge, dcEdge, invDvEdge, invDcEdge, &
-               weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
+               weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, u_pt, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
                uReconstructZonal, uReconstructMeridional, &
                gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
                edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
+               config_edge_point_u, coeffs_edge_point_u, &
                cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
                rk_step)
 
@@ -7386,10 +7416,11 @@ module atm_time_integration
    subroutine atm_compute_solve_diagnostics_work(nCells, nEdges, nVertices, &
             vertexDegree, dt, config_apvm_upwinding, &
             fVertex, fEdge, invAreaTriangle, invAreaCell, dvEdge, dcEdge, invDvEdge, invDcEdge, &
-            weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
+            weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, u_pt, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
             uReconstructZonal, uReconstructMeridional, &
             gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
             edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
+            config_edge_point_u, coeffs_edge_point_u, &
             cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
             rk_step)
 
@@ -7415,6 +7446,7 @@ module atm_time_integration
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: h_edge
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: h
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u_pt
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: v
       real (kind=RKIND), dimension(nVertLevels,nVertices+1) :: vorticity
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: ke
@@ -7437,6 +7469,8 @@ module atm_time_integration
       real (kind=RKIND), dimension(maxEdges,nCells+1) :: edgesOnCell_sign
       integer, dimension(nCells+1) :: nEdgesOnCell
       integer, dimension(nEdges+1) :: nEdgesOnEdge
+      logical, intent(in) :: config_edge_point_u
+      real (kind=RKIND), dimension(:,:), intent(in) :: coeffs_edge_point_u
 
       integer, intent(in) :: cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd
 
@@ -7454,6 +7488,13 @@ module atm_time_integration
       logical :: reconstruct_v
 
 
+      if (config_edge_point_u) then
+         do iEdge = edgeStart, edgeEnd
+            call atm_edge_stencil_sum(u, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs_edge_point_u, u_pt(:,iEdge))
+         end do
+!$OMP BARRIER
+      end if
+
       if (.not.config_ke_use_reconstructed_vel) then
          !$acc parallel default(present)
          !$acc loop gang
@@ -7465,7 +7506,7 @@ module atm_time_integration
 
             !$acc loop vector
             do k=1,nVertLevels
-               ke_edge(k,iEdge) = efac*u(k,iEdge)**2
+               ke_edge(k,iEdge) = efac*u_pt(k,iEdge)**2
             end do
 
          enddo
@@ -7503,7 +7544,7 @@ module atm_time_integration
 !DIR$ IVDEP
             !$acc loop vector
             do k=1,nVertLevels
-               vorticity(k,iVertex) = vorticity(k,iVertex) + s * u(k,iEdge)
+               vorticity(k,iVertex) = vorticity(k,iVertex) + s * u_pt(k,iEdge)
             end do
          end do
 !DIR$ IVDEP
@@ -7781,7 +7822,7 @@ module atm_time_integration
             do k = 1,nVertLevels
                gradPVt(k,iEdge) = (pv_vertex(k,verticesOnEdge(2,iEdge)) - pv_vertex(k,verticesOnEdge(1,iEdge))) * r1
                gradPVn(k,iEdge) = (pv_cell(k,cellsOnEdge(2,iEdge)) - pv_cell(k,cellsOnEdge(1,iEdge))) * r2
-               pv_edge(k,iEdge) = pv_edge(k,iEdge) - r * (v(k,iEdge) * gradPVt(k,iEdge) + u(k,iEdge) * gradPVn(k,iEdge))
+               pv_edge(k,iEdge) = pv_edge(k,iEdge) - r * (v(k,iEdge) * gradPVt(k,iEdge) + u_pt(k,iEdge) * gradPVn(k,iEdge))
             end do
          end do
          !$acc end parallel

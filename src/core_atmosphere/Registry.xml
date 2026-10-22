@@ -311,6 +311,11 @@
                      description="Whether the horizontal divergences of the edge fluxes use the flux at the Voronoi edge midpoint, reconstructed from the fluxes at xEdge of the edge and of its edgesOnEdge with coeffs_edge_midpoint_reconstruct read from custom_operators stream file"
                      possible_values="Logical values"/>
 
+                <nml_option name="config_edge_point_u" type="logical" default_value="false"
+                     units="-"
+                     description="Whether the velocity is the mean normal velocity over the Voronoi edge, so that its point value at xEdge, used by the vorticity, kinetic energy, Coriolis and tangential terms and by the midpoint flux, is reconstructed from the velocities of the edge and of its edgesOnEdge with coeffs_edge_point_u read from custom_operators stream file"
+                     possible_values="Logical values"/>
+
                 <nml_option name="config_ke_use_reconstructed_vel" type="logical" default_value="false"
                      units="-"
                      description="Whether to use the cell reconstructed velocity to compute the cell kinetic energy"
@@ -2004,6 +2009,12 @@
 
                 <var name="flux_w_edge" type="real" dimensions="nVertLevelsP1 nEdges" units="kg m^{-1} s^{-2}"
                      description="Edge flux of the vertical momentum per unit length, before the midpoint reconstruction (config_edge_midpoint_flux)"/>
+
+                <var name="u_point" type="real" dimensions="nVertLevels nEdges" units="m s^{-1}"
+                     description="Point value at xEdge of the normal velocity (config_edge_point_u)"/>
+
+                <var name="ru_point" type="real" dimensions="nVertLevels nEdges" units="kg m^{-2} s^{-1}"
+                     description="rho_edge times the point value of the normal velocity at xEdge (config_edge_point_u)"/>
 
                 <var name="rw" type="real" dimensions="nVertLevelsP1 nCells Time" units="kg m^{-2} s^{-1}"
                      description="rho*omega/zz carried at w points"/>
