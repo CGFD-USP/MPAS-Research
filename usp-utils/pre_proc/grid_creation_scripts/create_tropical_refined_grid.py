@@ -107,6 +107,8 @@ def run_jigsaw(base, fine, ratio, width, args):
     opts.geom_file, opts.jcfg_file = base + ".msh", base + ".jig"
     opts.mesh_file, opts.hfun_file = base + "-MESH.msh", base + "-HFUN.msh"
     design = lambda lat: cell_width(lat, fine, ratio, width)
+    source_design = None if args.source_width is None else \
+        (lambda lat: cell_width(lat, fine / 2 ** args.levels, ratio, args.source_width))
     geom = jig.jigsaw_msh_t()
     geom.mshID = "ELLIPSOID-MESH"
     geom.radii = EARTH_RADIUS_KM * np.ones(3, float)
@@ -118,7 +120,7 @@ def run_jigsaw(base, fine, ratio, width, args):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import tropical_start_set
         opts.init_file = base + "-INIT.msh"
-        jig.savemsh(opts.init_file, tropical_start_set.start_mesh(args.start, design, EARTH_RADIUS_KM, args.source, args.levels, args.direction))
+        jig.savemsh(opts.init_file, tropical_start_set.start_mesh(args.start, design, EARTH_RADIUS_KM, args.source, args.levels, args.direction, source_design))
         opts.optm_kern, opts.optm_zip_, opts.optm_div_ = "cvt+dqdx", True, True
     opts.optm_iter, opts.optm_qlim, opts.optm_qtol = args.optm_iter, args.qlim, args.qtol
     opts.numthread = args.threads
@@ -234,6 +236,9 @@ if __name__ == "__main__":
     p.add_argument("--source", help="--start coarsen: MPAS grid file whose cell centres are decimated")
     p.add_argument("--direction", type=float, nargs=3, default=(1.0, 0.0, 0.0), metavar=("X", "Y", "Z"),
                    help="--start coarsen: the decimation starts at the cell closest to this direction (default 1 0 0)")
+    p.add_argument("--source-width", dest="source_width", type=float,
+                   help="--start coarsen: transition width (degrees) of the source mesh. The decimated points are moved in "
+                        "latitude to the cell fraction of this mesh's design")
     p.add_argument("--levels", type=int, default=1, help="--start coarsen: number of decimations, each doubling the spacing")
     p.add_argument("--pre-power", dest="pre_power", type=float, default=0.0,
                    help="--start continuation: first run the steps with merge and split off and the cell width raised to this "

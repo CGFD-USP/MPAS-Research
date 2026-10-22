@@ -18,8 +18,9 @@ esac
 export MPAS_BUILD MPAS_GRIDS MPAS_BIND
 
 # nominal cell spacing (km) of an NCAR mesh x1.<nCells>, as in NCAR's mesh names:
-# nCells = 10 n^2 + 2, and 480 km for x1.2562 (n = 16)
+# nCells = 10 n^2 + 2, and 480 km for x1.2562 (n = 16). $JW_DX_KM sets it for any other mesh.
 jw_dx_km() {
+  [ -z "${JW_DX_KM:-}" ] || { echo "$JW_DX_KM"; return; }
   [[ $1 =~ ^x1\.([0-9]+)$ ]] || { echo "$1 is not an NCAR mesh x1.<nCells>" >&2; return 1; }
   awk -v n="${BASH_REMATCH[1]}" 'BEGIN { printf "%.6g\n", 480 * sqrt(2560 / (n - 2)) }'
 }

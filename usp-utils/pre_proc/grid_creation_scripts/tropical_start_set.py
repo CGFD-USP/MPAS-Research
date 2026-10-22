@@ -148,15 +148,33 @@ def continuation_points(width_of_lat, radius):
     return _geodesic(int(round(np.sqrt((cell_count(width_of_lat, radius) - 2.0) / 10.0))))
 
 
-def mapped_points(width_of_lat, radius):
-    """Points on the unit sphere, see the module text."""
-    p = continuation_points(width_of_lat, radius)
+def _cell_fraction(width_of_lat):
+    """Latitudes (radians) and the fraction of the cells of the design that lie south of each."""
     lat = np.linspace(-0.5 * np.pi, 0.5 * np.pi, 20001)
     f = width_of_lat(np.degrees(lat)) ** -2 * np.cos(lat)
     cdf = np.concatenate([[0.0], np.cumsum(0.5 * (f[1:] + f[:-1]) * np.diff(lat))])
-    new = np.interp(0.5 * (1.0 + p[:, 2]), cdf / cdf[-1], lat)
+    return lat, cdf / cdf[-1]
+
+
+def _set_latitudes(p, new):
     r = np.cos(new) / np.maximum(np.hypot(p[:, 0], p[:, 1]), 1e-300)
     return np.stack([p[:, 0] * r, p[:, 1] * r, np.sin(new)], 1)
+
+
+def mapped_points(width_of_lat, radius):
+    """Points on the unit sphere, see the module text."""
+    p = continuation_points(width_of_lat, radius)
+    lat, cdf = _cell_fraction(width_of_lat)
+    return _set_latitudes(p, np.interp(0.5 * (1.0 + p[:, 2]), cdf, lat))
+
+
+def remap_latitudes(p, src_width_of_lat, dst_width_of_lat):
+    """Points p on the unit sphere moved along their meridians so that the fraction of points south of each
+    one follows the cell fraction of the destination design instead of the source design."""
+    lat_s, cdf_s = _cell_fraction(src_width_of_lat)
+    lat_d, cdf_d = _cell_fraction(dst_width_of_lat)
+    frac = np.interp(np.arcsin(np.clip(p[:, 2], -1.0, 1.0)), lat_s, cdf_s)
+    return _set_latitudes(p, np.interp(frac, cdf_d, lat_d))
 
 
 def blend_width(width_of_lat, radius, t, power=1.0):
@@ -217,15 +235,16 @@ def decimate(points, direction=(1.0, 0.0, 0.0)):
     return np.flatnonzero(state == 1)
 
 
-def coarsen_points(grid_file, levels=1, direction=(1.0, 0.0, 0.0)):
-    """Cell centres of an MPAS grid file on the unit sphere, decimated `levels` times (spacing 2^levels times larger)."""
+def coarsen_points(grid_file, levels=1, direction=(1.0, 0.0, 0.0), remap=None):
+    """Cell centres of an MPAS grid file on the unit sphere, decimated `levels` times (spacing 2^levels times larger).
+    remap = (source width of lat, destination width of lat) moves the latitudes as in remap_latitudes."""
     import netCDF4
     with netCDF4.Dataset(grid_file) as f:
         pts = np.stack([np.ma.getdata(f[k][:]) for k in ("xCell", "yCell", "zCell")], 1).astype(float)
     pts /= np.linalg.norm(pts, axis=1)[:, None]
     for _ in range(levels):
         pts = pts[decimate(pts, direction)]
-    return pts
+    return pts if remap is None else remap_latitudes(pts, *remap)
 
 
 def triangulate(points):
@@ -239,11 +258,11 @@ def triangulate(points):
     return tri
 
 
-def start_mesh(kind, width_of_lat, radius, source=None, levels=1, direction=(1.0, 0.0, 0.0)):
+def start_mesh(kind, width_of_lat, radius, source=None, levels=1, direction=(1.0, 0.0, 0.0), source_width_of_lat=None):
     """JIGSAW mesh (euclidean-mesh with vert3 and tria3) of the starting set, coordinates scaled to radius."""
     import jigsawpy as jig
     if kind == "coarsen":
-        pts = coarsen_points(source, levels, direction)
+        pts = coarsen_points(source, levels, direction, None if source_width_of_lat is None else (source_width_of_lat, width_of_lat))
     else:
         pts = {"rings": ring_points, "icos": icos_points, "geo": geodesic_points,
                "continuation": continuation_points, "mapped": mapped_points}[kind](width_of_lat, radius)
