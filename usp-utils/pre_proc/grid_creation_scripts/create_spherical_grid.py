@@ -22,6 +22,7 @@ import jigsaw_util as jutil
 from mpas_tools.mesh.creation.jigsaw_to_netcdf import jigsaw_to_netcdf
 from mpas_tools.mesh.conversion import convert
 from mpas_tools.io import write_netcdf
+from mpas_tools.ocean.inject_meshDensity import inject_spherical_meshDensity
 
 #import mpas_tools
 #print(mpas_tools.__file__) 
@@ -86,6 +87,10 @@ def main(args):
             dir=out_dir,
             graphInfoFileName=out_basepath+"_graph.info"),
             out_filename)
+
+    #meshDensity = (min width / width)^4, which MPAS uses to scale the horizontal mixing
+    if(args.opt=="unif" or args.opt=="localref"):
+        inject_spherical_meshDensity(cellWidth, lon, lat, out_filename)
 
     #clean-up intermediary files
     os.remove(out_basepath + '.msh')

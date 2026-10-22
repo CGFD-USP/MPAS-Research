@@ -150,16 +150,20 @@ def run_jigsaw(base, fine, ratio, width, args):
     return opts.mesh_file, steps_log
 
 
-def convert_to_mpas(mesh_file, out_dir, base):
+def convert_to_mpas(mesh_file, out_dir, base, cell_width_lonlat):
+    """MPAS grid file of a JIGSAW mesh, with meshDensity = (min width / width)^4 of the design (cell_width_lonlat =
+    cellWidth, lon, lat), which MPAS uses to scale the horizontal mixing."""
     import xarray
     from mpas_tools.io import write_netcdf
     from mpas_tools.mesh.conversion import convert
     from mpas_tools.mesh.creation.jigsaw_to_netcdf import jigsaw_to_netcdf
+    from mpas_tools.ocean.inject_meshDensity import inject_spherical_meshDensity
     jigsaw_to_netcdf(msh_filename=mesh_file, output_name=base + "_triangles.nc", on_sphere=True,
                      sphere_radius=1.0)
     mesh = convert(xarray.open_dataset(base + "_triangles.nc"), dir=out_dir,
                    graphInfoFileName=base + ".graph.info")
     write_netcdf(mesh, base + ".nc")
+    inject_spherical_meshDensity(*cell_width_lonlat, base + ".nc")
 
 
 def peak_gb():
@@ -192,7 +196,7 @@ def main(args):
     mesh_file, log["steps"] = run_jigsaw(base, fine, args.ratio, width, args)
     log["jigsaw_s"], log["jigsaw_peak_gb"] = round(time.time() - t0, 1), round(peak_gb(), 2)
     t1 = time.time()
-    convert_to_mpas(mesh_file, out_dir, base)
+    convert_to_mpas(mesh_file, out_dir, base, cell_width_grid(fine, args.ratio, width))
     log["convert_s"], log["peak_gb"] = round(time.time() - t1, 1), round(peak_gb(), 2)
     for ext in (".msh", ".jig", "-MESH.msh", "-HFUN.msh", "_triangles.nc", "-INIT.msh"):
         if os.path.exists(base + ext):
