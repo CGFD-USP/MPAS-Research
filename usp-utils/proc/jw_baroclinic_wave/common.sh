@@ -37,6 +37,7 @@ jw_dt() {
 jw_config() {
   case $1 in
     trsk) echo none false false false false ;;
+    trsk-em) echo operators-em.nc false false false false ;;
     consistent) echo operators-consistent.nc true true true false ;;
     consistent-vke) echo operators-consistent.nc true true true true ;;
     lsq2) echo operators-lsq2.nc true true true false ;;

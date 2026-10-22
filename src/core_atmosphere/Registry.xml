@@ -271,11 +271,6 @@
                      description="Form of the 3-d divergence damping: a viscosity config_smdiv*config_len_disp*dcEdge/dts applied after each acoustic step (scale_aware), or forward weighting of rtheta_pp by config_smdiv in the acoustic-step pressure gradient, whose viscosity vanishes as the time step goes to zero (forward_weight, Klemp et al. 2007, eq. 19)"
                      possible_values="`scale_aware' or `forward_weight'"/>
 
-                <nml_option name="config_edge_point_correction" type="logical" default_value="false" in_defaults="false"
-                     units="-"
-                     description="Whether to correct edge values from the cell-to-cell arc midpoint (xEdge) to the Voronoi edge midpoint and back: rho_edge and the centred edge values of transported fields at the Voronoi edge midpoint, and the normal velocity at xEdge (u_point, from cell velocities of coeffs_reconstruct interpolated to the vertices) in the vorticity, kinetic energy, tangential velocity and nonlinear Coriolis term. Spherical meshes only."
-                     possible_values=".true. or .false."/>
-
                 <nml_option name="config_acoustic_pgf_zz" type="logical" default_value="false" in_defaults="false"
                      units="-"
                      description="Whether the acoustic-step horizontal pressure gradient differences zz*rtheta_pp, the linearisation of the large-step pressure gradient (Klemp et al. 2007, eq. 13), instead of rtheta_pp"
@@ -309,6 +304,11 @@
                 <nml_option name="config_use_custom_coeffs_reconstruct" type="logical" default_value="false"
                      units="-"
                      description="Whether to use custom coeffs_reconstruct read from custom_operators stream file"
+                     possible_values="Logical values"/>
+
+                <nml_option name="config_edge_midpoint_flux" type="logical" default_value="false"
+                     units="-"
+                     description="Whether the horizontal divergences of the edge fluxes use the flux at the Voronoi edge midpoint, reconstructed from the fluxes at xEdge of the edge and of its edgesOnEdge with coeffs_edge_midpoint_reconstruct read from custom_operators stream file"
                      possible_values="Logical values"/>
 
                 <nml_option name="config_ke_use_reconstructed_vel" type="logical" default_value="false"
@@ -1666,13 +1666,6 @@
                 <var name="deformation_coef_s" type="real" dimensions="maxEdges nCells" units="unitless"
                      description="Coefficients for computing the sine-only terms of the 3d deformation"/>
 
-                <!-- Edge-point correction weights (config_edge_point_correction) -->
-                <var name="edgeShift" type="real" dimensions="nEdges" units="unitless"
-                     description="Signed distance along the edge tangent, from xEdge to the Voronoi edge midpoint, over dvEdge"/>
-
-                <var name="baryVertex" type="real" dimensions="vertexDegree nVertices" units="unitless"
-                     description="Linear interpolation weights from cellsOnVertex to the vertex"/>
-
                 <!-- Arrays required for reconstruction of velocity field -->
                 <var name="coeffs_reconstruct" type="real" dimensions="R3 maxEdges nCells" units="unitless"
                      description="Coefficients to reconstruct velocity vectors at cell centers"/>
@@ -1909,9 +1902,6 @@
                 <var name="rho_edge" type="real" dimensions="nVertLevels nEdges Time" units="kg m^{-3}"
                      description="rho_zz averaged from cell centers to the cell edge"/>
 
-                <var name="u_point" type="real" dimensions="nVertLevels nEdges Time" units="m s^{-1}"
-                     description="Normal velocity at xEdge from the edge-mean normal velocity u (config_edge_point_correction)"/>
-
                 <var name="ke" type="real" dimensions="nVertLevels nCells Time" units="m^2 s^{-2}"
                      description="Kinetic energy at a cell center"/>
 
@@ -2008,6 +1998,12 @@
 
                 <var name="ru_save" type="real" dimensions="nVertLevels nEdges Time" units="kg m^{-2} s^{-1}"
                      description="predicted value of horizontal momentum, saved before acoustic steps"/>
+
+                <var name="flux_theta_edge" type="real" dimensions="nVertLevels nEdges" units="kg K m^{-2} s^{-1}"
+                     description="Edge flux of rho_zz*theta_m per unit length, before the midpoint reconstruction (config_edge_midpoint_flux)"/>
+
+                <var name="flux_w_edge" type="real" dimensions="nVertLevelsP1 nEdges" units="kg m^{-1} s^{-2}"
+                     description="Edge flux of the vertical momentum per unit length, before the midpoint reconstruction (config_edge_midpoint_flux)"/>
 
                 <var name="rw" type="real" dimensions="nVertLevelsP1 nCells Time" units="kg m^{-2} s^{-1}"
                      description="rho*omega/zz carried at w points"/>

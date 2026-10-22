@@ -134,6 +134,7 @@ module atm_core_interface
       logical, pointer :: config_use_custom_weightsOnEdge, config_use_custom_coeffs_reconstruct
       logical, pointer :: custom_operatorsActive, custom_weightsOnEdgeActive, custom_coeffs_reconstructActive
       logical, pointer :: config_ke_use_vertex_reconstructed_vel, custom_vertex_coeffs_reconstructActive
+      logical, pointer :: config_edge_midpoint_flux, custom_edge_midpoint_fluxActive
       character(len=StrKIND) :: attvalue
       integer :: local_ierr
 
@@ -303,13 +304,27 @@ module atm_core_interface
       end if
 
 
+      ! Optional coeffs_edge_midpoint_reconstruct to be read from custom_operators stream
+      nullify(config_edge_midpoint_flux)
+      call mpas_pool_get_config(configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      nullify(custom_edge_midpoint_fluxActive)
+      call mpas_pool_get_package(packages, 'custom_edge_midpoint_fluxActive', custom_edge_midpoint_fluxActive)
+      if ( associated(config_edge_midpoint_flux) .and. associated(custom_edge_midpoint_fluxActive) ) then
+          custom_edge_midpoint_fluxActive = config_edge_midpoint_flux
+      else
+         ierr = ierr + 1
+         call mpas_log_write("Package setup failed for 'custom_edge_midpoint_flux'. 'custom_edge_midpoint_flux' is not a package.", &
+                             messageType=MPAS_LOG_ERR)
+      end if
+
       ! If either config_use_custom_coeffs_reconstruct or config_use_custom_weightsOnEdge
-      ! or config_ke_use_vertex_reconstructed_vel is true
+      ! or config_ke_use_vertex_reconstructed_vel or config_edge_midpoint_flux is true
       ! we need the custom_operators stream.
       nullify(custom_operatorsActive)
       call mpas_pool_get_package(packages, 'custom_operatorsActive', custom_operatorsActive)
       if ( associated(custom_operatorsActive) ) then
-          custom_operatorsActive = (custom_weightsOnEdgeActive .or. custom_coeffs_reconstructActive .or. custom_vertex_coeffs_reconstructActive)
+          custom_operatorsActive = (custom_weightsOnEdgeActive .or. custom_coeffs_reconstructActive .or. custom_vertex_coeffs_reconstructActive &
+                                 .or. custom_edge_midpoint_fluxActive)
       else
          ierr = ierr + 1
          call mpas_log_write("Package setup failed for 'custom_operators'. 'custom_operators' is not a package.", &
