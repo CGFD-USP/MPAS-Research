@@ -4384,6 +4384,11 @@ module atm_time_integration
 
       integer, dimension(:), pointer :: bdyMaskCell  ! MPAS_regional addition
 
+      logical, pointer :: config_edge_midpoint_flux
+      integer, dimension(:,:), pointer :: edgesOnEdge
+      integer, dimension(:), pointer :: nEdgesOnEdge
+      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint_reconstruct
+
       call mpas_pool_get_array(diag, 'wwAvg', wwAvg)
       call mpas_pool_get_array(diag, 'rw_save', rw_save)
       call mpas_pool_get_array(diag, 'rw', rw)
@@ -4450,6 +4455,15 @@ module atm_time_integration
                              bdyMaskCell, &  !  addition for regional_MPAS
                              cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
                              cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
+
+      call mpas_pool_get_config(configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      if (config_edge_midpoint_flux) then
+         call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_reconstruct', coeffs_edge_midpoint_reconstruct)
+         call atm_edge_midpoint_ruavg(ruAvg, ru_save, edgesOnEdge, nEdgesOnEdge, coeffs_edge_midpoint_reconstruct, &
+                                      edgeStart, edgeEnd)
+      end if
 
    end subroutine atm_recover_large_step_variables
 
@@ -7187,6 +7201,39 @@ module atm_time_integration
       end do
 
    end subroutine atm_edge_midpoint_flux
+
+
+   !----------------------------------------------------------------------
+   !  routine atm_edge_midpoint_ruavg
+   !
+   !> \brief Midpoint flux in the time-averaged mass flux of the scalar transport
+   !> \details
+   !>  tend_rho takes the divergence of the midpoint flux of ru at time t (ru_save), so
+   !>  ruAvg gets the same correction, fmid(ru_save) - ru_save, and the scalars move with
+   !>  the mass of the step.
+   !----------------------------------------------------------------------
+   subroutine atm_edge_midpoint_ruavg(ruAvg, ru_save, edgesOnEdge, nEdgesOnEdge, coeffs, edgeStart, edgeEnd)
+
+      use mpas_atm_dimensions
+
+      implicit none
+
+      real (kind=RKIND), dimension(:,:), intent(inout) :: ruAvg
+      real (kind=RKIND), dimension(:,:), intent(in) :: ru_save
+      integer, dimension(:,:), intent(in) :: edgesOnEdge
+      integer, dimension(:), intent(in) :: nEdgesOnEdge
+      real (kind=RKIND), dimension(:,:), intent(in) :: coeffs
+      integer, intent(in) :: edgeStart, edgeEnd
+
+      real (kind=RKIND), dimension(nVertLevels) :: fmid
+      integer :: iEdge
+
+      do iEdge = edgeStart, edgeEnd
+         call atm_edge_midpoint_flux(ru_save, iEdge, edgesOnEdge, nEdgesOnEdge, coeffs, fmid)
+         ruAvg(1:nVertLevels,iEdge) = ruAvg(1:nVertLevels,iEdge) + fmid(1:nVertLevels) - ru_save(1:nVertLevels,iEdge)
+      end do
+
+   end subroutine atm_edge_midpoint_ruavg
 
 
    !----------------------------------------------------------------------
