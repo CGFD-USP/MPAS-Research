@@ -94,7 +94,12 @@ def main() -> int:
     # --- 2D surface + mean sea level ---
     for sn, name in SURFACE.items():
         if sn in sfc:
-            variables.append(pw.V2d(name, arr2d(sfc[sn])))
+            field = sfc[sn]
+            if sn == "sdwe":
+                # missing over water, where there is no snow; init_atmosphere interpolates SNOW without a land
+                # mask, so missing values would reach the coastal land cells
+                field = field.fillna(0.0)
+            variables.append(pw.V2d(name, arr2d(field)))
         else:
             print(f"[WARN] surface field missing: {sn}")
     if "prmsl" in msl:
