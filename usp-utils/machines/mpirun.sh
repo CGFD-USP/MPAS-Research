@@ -82,9 +82,12 @@ for p in "${extra[@]}"; do
 done
 ssh_args="-o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=$work/known_hosts -o StrictHostKeyChecking=yes"
 [ -z "${MPAS_SSH_KEY:-}" ] || ssh_args="-i $MPAS_SSH_KEY $ssh_args"
+# PMIx 5.0.1 of the image fails to store the modex of large jobs in shared memory (PMIX_ERR_NOMEM in gds_shmem),
+# so mpirun and the remote daemons use the hash store; MPAS_PMIX_GDS overrides it
+export PMIX_MCA_gds=${MPAS_PMIX_GDS:-hash}
 opts+=(--hostfile "$work/hostfile"
   --mca plm_rsh_args "$ssh_args"
-  --mca orte_launch_agent "$APPTAINER exec ${binds[*]} $sif orted"
+  --mca orte_launch_agent "env PMIX_MCA_gds=$PMIX_MCA_gds $APPTAINER exec ${binds[*]} $sif orted"
   --mca plm_rsh_no_tree_spawn 1
   # a detached daemon would leave apptainer to unmount the image under the ranks
   --mca orte_leave_session_attached 1)
