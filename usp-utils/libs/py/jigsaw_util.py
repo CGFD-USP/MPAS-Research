@@ -256,6 +256,7 @@ def jigsaw_gen_sph_grid(cellWidth, x, y, earth_radius=6371.0e3,
     opts.optm_qlim = 0.9375
     opts.optm_qtol = 1.0e-6
     opts.optm_iter = 5000000
+    opts.optm_kern = "cvt+dqdx"         # centroidal Voronoi, as MPAS assumes
     opts.verbosity = +1
     jig.savejig(opts.jcfg_file, opts)
     
