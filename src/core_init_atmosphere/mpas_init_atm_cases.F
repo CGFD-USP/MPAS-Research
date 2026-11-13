@@ -571,6 +571,8 @@ module init_atm_cases
       integer, pointer :: config_theta_adv_order
       integer, pointer :: config_init_case
       logical, intent(in) :: flat_surface, model_pgf, exact_avg
+      logical, pointer :: config_point_wind
+      real (kind=RKIND), dimension(:), pointer :: angleEdge
       integer :: jw_case
 
       character (len=StrKIND), pointer :: config_interface_projection
@@ -580,6 +582,7 @@ module init_atm_cases
       if (flat_surface) jw_case = config_init_case - 16
       if (model_pgf) jw_case = config_init_case - 19
       if (exact_avg) jw_case = config_init_case - 22
+      call mpas_pool_get_config(configs, 'config_point_wind', config_point_wind)
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', config_coef_3rd_order)
       call mpas_pool_get_config(configs, 'config_theta_adv_order', config_theta_adv_order)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
@@ -677,6 +680,7 @@ module init_atm_cases
       call mpas_pool_get_array(mesh, 'lonVertex', lonVertex)
       call mpas_pool_get_array(mesh, 'latEdge', latEdge)
       call mpas_pool_get_array(mesh, 'lonEdge', lonEdge)
+      call mpas_pool_get_array(mesh, 'angleEdge', angleEdge)
       call mpas_pool_get_array(mesh, 'fEdge', fEdge)
       call mpas_pool_get_array(mesh, 'fVertex', fVertex)
 
@@ -1124,24 +1128,40 @@ module init_atm_cases
          lat2 = latVertex(vtx2)
          iCell1 = cellsOnEdge(1,iEdge)
          iCell2 = cellsOnEdge(2,iEdge)
-         flux = (0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+         if (config_point_wind) then
+            flux = sin(2.0_RKIND*latEdge(iEdge))**2 * cos(angleEdge(iEdge))
+         else
+            flux = (0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+         end if
 
          if (jw_case == 2) then
             r_pert = sphere_distance( latEdge(iEdge), lonEdge(iEdge), &
                                       lat_pert, lon_pert, 1.0_RKIND)/(pert_radius)
-            u_pert = u_perturbation*exp(-r_pert**2)*(lat2-lat1) * sphere_radius / dvEdge(iEdge)
+            if (config_point_wind) then
+               u_pert = u_perturbation*exp(-r_pert**2)*cos(angleEdge(iEdge))
+            else
+               u_pert = u_perturbation*exp(-r_pert**2)*(lat2-lat1) * sphere_radius / dvEdge(iEdge)
+            end if
 
          else if (jw_case == 3) then
             lon_Edge = lonEdge(iEdge)
-            u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert)) &
-                         *(0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+            if (config_point_wind) then
+               u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert))*flux
+            else
+               u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert)) &
+                            *(0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+            end if
          else
             u_pert = 0.0
          end if
 
          if (rebalance) then
 
-           call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat,exact_avg)
+           if (config_point_wind) then
+             call init_atm_calc_point_zonal(u_2d,lat_2d,flux_zonal,latEdge(iEdge),cos(angleEdge(iEdge)),u0,nz1,nlat)
+           else
+             call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat,exact_avg)
+           end if
            do k=1,nVertLevels
              fluxk = u0*flux_zonal(k)/(0.5*(rb(k,iCell1)+rb(k,iCell2)+rr(k,iCell1)+rr(k,iCell2)))
              u(k,iEdge) = fluxk + u_pert
@@ -1397,6 +1417,40 @@ module init_atm_cases
    end subroutine init_atm_calc_flux_zonal
 
 
+   subroutine init_atm_calc_point_zonal(u_2d,lat_2d,flux_zonal,lat_in,nzonal,u0,nz1,nlat)
+
+      ! u_2d at the latitude lat_in times nzonal, the zonal component of the edge normal,
+      ! over u0, by Lagrange interpolation of degree npts - 1 on the uniform grid lat_2d
+
+      implicit none
+
+      integer, intent(in) :: nz1,nlat
+      real (kind=RKIND), dimension(nz1,nlat), intent(in) :: u_2d
+      real (kind=RKIND), dimension(nlat), intent(in) :: lat_2d
+      real (kind=RKIND), dimension(nz1), intent(out) :: flux_zonal
+      real (kind=RKIND), intent(in) :: lat_in, nzonal, u0
+
+      integer, parameter :: npts = 4
+      integer :: i0, j, m
+      real (kind=RKIND) :: lat
+      real (kind=RKIND), dimension(npts) :: w
+
+      lat = abs(lat_in)
+      i0 = min(max(int(lat/lat_2d(2)) + 1 - (npts/2 - 1), 1), nlat - npts + 1)
+      do j=1,npts
+        w(j) = nzonal/u0
+        do m=1,npts
+          if (m /= j) w(j) = w(j)*(lat - lat_2d(i0+m-1))/(lat_2d(i0+j-1) - lat_2d(i0+m-1))
+        end do
+      end do
+      flux_zonal(:) = 0.0_RKIND
+      do j=1,npts
+        flux_zonal(:) = flux_zonal(:) + w(j)*u_2d(:,i0+j-1)
+      end do
+
+   end subroutine init_atm_calc_point_zonal
+
+
    !SHP-balance
    subroutine init_atm_recompute_geostrophic_wind(u_2d,rho_2d,rb_2d,pp_2d,qv_2d,lat_2d,zz_2d,zx_2d,     &
                                          cf1,cf2,cf3,fzm,fzp,rdzw,nz1,nlat,dlat,rad,model_pgf)
@@ -1516,7 +1570,7 @@ module init_atm_cases
    ! an exact steady solution of the shallow-atmosphere equations. Uniform levels
    ! up to config_ztop. The pressure is in discrete hydrostatic balance in each
    ! column, and u at an edge is the mean normal velocity over the dual edge
-   ! (stream function -a u0 sin(lat)).
+   ! (stream function -a u0 sin(lat)), or its point value at xEdge with config_point_wind.
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       implicit none
@@ -1540,9 +1594,9 @@ module init_atm_cases
       real (kind=RKIND), dimension(:), pointer :: xCell, yCell, zCell, xEdge, yEdge, zEdge, xVertex, yVertex, zVertex
       real (kind=RKIND), dimension(:), pointer :: dcEdge, dvEdge, areaCell, areaTriangle
       real (kind=RKIND), dimension(:,:), pointer :: kiteAreasOnVertex, weightsOnEdge
-      real (kind=RKIND), dimension(:), pointer :: latCell, latEdge, latVertex, fEdge, fVertex
+      real (kind=RKIND), dimension(:), pointer :: latCell, latEdge, latVertex, angleEdge, fEdge, fVertex
       real (kind=RKIND), pointer :: nominalMinDc, sphere_radius, config_ztop, cf1, cf2, cf3
-      logical, pointer :: on_a_sphere
+      logical, pointer :: on_a_sphere, config_point_wind
       integer, dimension(:), pointer :: nEdgesOnEdge
       integer, dimension(:,:), pointer :: edgesOnEdge, cellsOnEdge, verticesOnEdge
       integer, pointer :: nEdges, maxEdges, nVertices
@@ -1555,6 +1609,7 @@ module init_atm_cases
 
       call mpas_pool_get_config(configs, 'config_ztop', config_ztop)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
+      call mpas_pool_get_config(configs, 'config_point_wind', config_point_wind)
       call mpas_pool_get_config(mesh, 'on_a_sphere', on_a_sphere)
       call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
 
@@ -1585,6 +1640,7 @@ module init_atm_cases
       call mpas_pool_get_array(mesh, 'latCell', latCell)
       call mpas_pool_get_array(mesh, 'latEdge', latEdge)
       call mpas_pool_get_array(mesh, 'latVertex', latVertex)
+      call mpas_pool_get_array(mesh, 'angleEdge', angleEdge)
       call mpas_pool_get_array(mesh, 'fEdge', fEdge)
       call mpas_pool_get_array(mesh, 'fVertex', fVertex)
       call mpas_pool_get_array(mesh, 'zgrid', zgrid)
@@ -1720,12 +1776,16 @@ module init_atm_cases
       end do
       scalars(:,:,:) = 0.0_RKIND
 
-      ! normal velocity: mean over the dual edge, from the stream function at its vertices
+      ! normal velocity: mean over the dual edge, from the stream function at its vertices, or the point value at xEdge
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1,iEdge)
          cell2 = cellsOnEdge(2,iEdge)
-         u(:,iEdge) = u0 * sphere_radius * (sin(latVertex(verticesOnEdge(2,iEdge))) - sin(latVertex(verticesOnEdge(1,iEdge)))) &
-                    / dvEdge(iEdge)
+         if (config_point_wind) then
+            u(:,iEdge) = u0 * cos(latEdge(iEdge)) * cos(angleEdge(iEdge))
+         else
+            u(:,iEdge) = u0 * sphere_radius * (sin(latVertex(verticesOnEdge(2,iEdge))) - sin(latVertex(verticesOnEdge(1,iEdge)))) &
+                       / dvEdge(iEdge)
+         end if
          ru(:,iEdge) = 0.5_RKIND * (rho_zz(:,cell1) + rho_zz(:,cell2)) * u(:,iEdge)
          fEdge(iEdge) = 2.0_RKIND * omega * sin(latEdge(iEdge))
       end do
