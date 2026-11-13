@@ -23,7 +23,8 @@
 # (init cases 24 and 23) add the exact edge average of the 2D wind and a 2D latitude grid refined to the mesh.
 # Other test cases (e.g. ../zonal_steady): a <case> other than wave and steady
 # takes its config_init_case from $JW_INIT_CASE, and $JW_INIT_EXTRA (namelist
-# groups) is appended to namelist.init_atmosphere. $JW_DT (s) replaces the time
+# groups) is appended to namelist.init_atmosphere, and $JW_INIT_NHYD_EXTRA (namelist lines, e.g.
+# config_point_wind = true) to its &nhyd_model. $JW_DT (s) replaces the time
 # step, $JW_HORIZ_MIXING the horizontal mixing (default 2d_smagorinsky),
 # $JW_SMDIV the divergence damping (default 0.1), and $JW_HISTORY_FIELDS and
 # $JW_DIAG_FIELDS the fields of the two output streams. $JW_NHYD_EXTRA (namelist
@@ -120,10 +121,11 @@ mkdir -p "$cdir"
 if mkdir "$idir" 2> /dev/null; then
   cd "$idir"
   ln -s "$grid" grid.nc
+  init_extra=${JW_INIT_NHYD_EXTRA:+$'\n'$JW_INIT_NHYD_EXTRA}
   cat > namelist.init_atmosphere << EOF
 &nhyd_model
     config_init_case = $init_case
-    config_start_time = '0000-01-01_00:00:00'
+    config_start_time = '0000-01-01_00:00:00'$init_extra
 /
 &dimensions
     config_nvertlevels = $levels
