@@ -370,6 +370,7 @@ module atm_core
       use mpas_vector_reconstruction
       use mpas_stream_manager
       use mpas_atm_boundaries, only : mpas_atm_setup_bdy_masks
+      use mpas_atm_consistent_operators, only : atm_consistent_operators_init
 #ifdef DO_PHYSICS
 !     use mpas_atmphys_aquaplanet
       use mpas_atmphys_control
@@ -482,6 +483,12 @@ module atm_core
       call atm_adv_coef_compression(mesh)
 
       call atm_couple_coef_3rd_order(mesh, block % configs)
+
+      call mpas_rbf_interp_initialize(mesh)
+      call mpas_init_reconstruct(mesh)
+
+      ! after mpas_init_reconstruct, whose coefficients it may replace, and before the first diagnostics
+      call atm_consistent_operators_init(mesh, block % configs)
       
       call mpas_pool_get_dimension(state, 'nVertices', nVertices_ptr)
       call mpas_pool_get_dimension(state, 'nVertLevels', nVertLevels_ptr)
@@ -539,9 +546,6 @@ module atm_core
 
       deallocate(ke_vertex)
       deallocate(ke_edge)
-
-      call mpas_rbf_interp_initialize(mesh)
-      call mpas_init_reconstruct(mesh)
 
       call mpas_pool_get_array(state, 'u', u, 1)
       call mpas_pool_get_array(diag, 'uReconstructX', uReconstructX)
