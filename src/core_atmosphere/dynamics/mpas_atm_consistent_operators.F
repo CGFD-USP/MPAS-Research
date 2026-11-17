@@ -20,12 +20,20 @@
 !>     edge as the mean of the Perot velocities of its two cells along the edge,
 !>     with weights weightsOnEdge_perot for its edgesOnEdge and
 !>     weightOnEdge_perot_own for the edge itself.
+!>   - config_edge_midpoint_flux: the normal flux at the midpoint of the Voronoi
+!>     edge from the fluxes at the edge points x_t of the edge and of its
+!>     edgesOnEdge, by a least-squares fit of a linear vector field (weights
+!>     coeffs_edge_midpoint_own and coeffs_edge_midpoint). The module also holds
+!>     the per-stage kernels of this option: the edge fluxes of the large step
+!>     (atm_compute_edge_fluxes) and the matching mass flux of the scalar
+!>     transport (atm_edge_midpoint_ruavg).
 !>
 !>  Positions are taken on the unit sphere and projected (gnomonic projection)
-!>  onto the plane tangent at the cell or vertex. A weight is computed only where
-!>  all its inputs are in the block; elsewhere the cell keeps the coefficients of
-!>  mpas_init_reconstruct, the vertex gets zero weights and the edge the weights
-!>  weightsOnEdge with a zero weight of its own.
+!>  onto the plane tangent at the cell, vertex or edge. A weight is computed only
+!>  where all its inputs are in the block; elsewhere the cell keeps the
+!>  coefficients of mpas_init_reconstruct, the vertex gets zero weights, the edge
+!>  the weights weightsOnEdge with a zero weight of its own, and the midpoint flux
+!>  is the flux at x_t.
 !
 !-----------------------------------------------------------------------
 module mpas_atm_consistent_operators
@@ -35,11 +43,12 @@ module mpas_atm_consistent_operators
    use mpas_pool_routines, only : mpas_pool_get_array, mpas_pool_get_dimension, mpas_pool_get_config
    use mpas_log, only : mpas_log_write
    use mpas_timer, only : mpas_timer_start, mpas_timer_stop
+   use mpas_atm_dimensions, only : nVertLevels
 
    implicit none
 
    private
-   public :: atm_consistent_operators_init
+   public :: atm_consistent_operators_init, atm_compute_edge_fluxes, atm_edge_midpoint_ruavg
 
    ! Unknowns of the least-squares fit of a linear vector field (a, b) + G x, with components a, b along the
    ! basis vectors e1, e2 and offsets x along them: a, b, da/dx1, db/dx1, da/dx2, db/dx2
@@ -76,6 +85,7 @@ module mpas_atm_consistent_operators
       type (mpas_pool_type), intent(in) :: configs
 
       character (len=StrKIND), pointer :: config_ke_reconstruction, config_tangential_reconstruction
+      logical, pointer :: config_edge_midpoint_flux
       logical, pointer :: on_a_sphere
       real (kind=RKIND), pointer :: sphere_radius
       integer, pointer :: nCells, nEdges, nVertices, nCellsSolve, nEdgesSolve, nVerticesSolve, vertexDegree, maxEdges
@@ -84,7 +94,8 @@ module mpas_atm_consistent_operators
                                           edgesOnVertex, cellsOnVertex, edgesOnEdge
       real (kind=RKIND), dimension(:), pointer :: xCell, yCell, zCell, xVertex, yVertex, zVertex
       real (kind=RKIND), dimension(:,:), pointer :: edgesOnCell_sign, weightsOnEdge, weightsOnEdge_perot
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
+      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own, coeffs_edge_midpoint_own
+      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
 
       real (kind=R8KIND), dimension(:,:), allocatable :: xc, xv, xt, ne
@@ -98,17 +109,18 @@ module mpas_atm_consistent_operators
 
       call mpas_pool_get_config(configs, 'config_ke_reconstruction', config_ke_reconstruction)
       call mpas_pool_get_config(configs, 'config_tangential_reconstruction', config_tangential_reconstruction)
+      call mpas_pool_get_config(configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
       ke_perot = trim(config_ke_reconstruction) == 'perot'
       ke_lsq2 = trim(config_ke_reconstruction) == 'lsq2'
       tangential_perot = trim(config_tangential_reconstruction) == 'perot'
-      if (.not. (ke_perot .or. ke_lsq2 .or. tangential_perot)) return
+      if (.not. (ke_perot .or. ke_lsq2 .or. tangential_perot .or. config_edge_midpoint_flux)) return
 
       call mpas_timer_start('atm_consistent_operators_init')
 
       call mpas_pool_get_config(mesh, 'on_a_sphere', on_a_sphere)
       if (.not. on_a_sphere) then
-         call mpas_log_write('config_ke_reconstruction and config_tangential_reconstruction other than ''trsk'' need a'// &
-                             ' spherical mesh', messageType=MPAS_LOG_CRIT)
+         call mpas_log_write('config_ke_reconstruction, config_tangential_reconstruction and config_edge_midpoint_flux'// &
+                             ' need a spherical mesh', messageType=MPAS_LOG_CRIT)
       end if
       call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
 
@@ -251,12 +263,275 @@ module mpas_atm_consistent_operators
          deallocate(we)
       end if
 
+      if (config_edge_midpoint_flux) then
+         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint', coeffs_edge_midpoint)
+         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_own', coeffs_edge_midpoint_own)
+
+         allocate(we(size(coeffs_edge_midpoint,1)))
+         n = 0
+         do iEdge = 1, nEdges
+            if (midpoint_stencil_ok(iEdge, nEdgesOnEdge(iEdge), edgesOnEdge(:,iEdge), verticesOnEdge(:,iEdge), &
+                                    nEdges, nVertices, edge_ok)) then
+               call edge_midpoint_weights(iEdge, nEdgesOnEdge(iEdge), edgesOnEdge(:,iEdge), cellsOnEdge(:,iEdge), &
+                                          verticesOnEdge(:,iEdge), xc, xv, xt, ne, we, wown)
+               coeffs_edge_midpoint(:,iEdge) = real(we, RKIND)
+               coeffs_edge_midpoint_own(iEdge) = real(wown, RKIND)
+            else
+               coeffs_edge_midpoint(:,iEdge) = 0.0_RKIND
+               coeffs_edge_midpoint_own(iEdge) = 1.0_RKIND
+               if (iEdge <= nEdgesSolve) n = n + 1
+            end if
+         end do
+
+         call mpas_log_write('Edge fluxes at the Voronoi edge midpoints; owned edges without the weights: $i', intArgs=(/n/))
+         deallocate(we)
+      end if
+
       if (allocated(wperot)) deallocate(wperot)
       deallocate(xc, xv, xt, ne, edge_ok, perot_ok)
 
       call mpas_timer_stop('atm_consistent_operators_init')
 
    end subroutine atm_consistent_operators_init
+
+
+   !-----------------------------------------------------------------------
+   !  routine atm_compute_edge_fluxes
+   !
+   !> \brief Edge fluxes of the large step with config_edge_midpoint_flux
+   !> \author Pedro Peixoto
+   !> \date   17 November 2026
+   !> \details
+   !>  On the edges edgeStart:edgeEnd, the horizontal fluxes per unit length of
+   !>  theta_m (with the perturbation flux of RK stages 2 and 3) and of w at x_t,
+   !>  as in the advection of atm_compute_dyn_tend, and the mass flux ru at the
+   !>  Voronoi edge midpoint. The caller exchanges 'dynamics:edge_fluxes', after
+   !>  which all three are valid on the edges of the owned and first-halo cells.
+   !
+   !-----------------------------------------------------------------------
+   subroutine atm_compute_edge_fluxes(state, diag, mesh, rk_step, edgeStart, edgeEnd)
+
+      implicit none
+
+      type (mpas_pool_type), intent(in) :: state
+      type (mpas_pool_type), intent(inout) :: diag
+      type (mpas_pool_type), intent(in) :: mesh
+      integer, intent(in) :: rk_step, edgeStart, edgeEnd
+
+      integer, pointer :: nCells, nEdges
+      integer, dimension(:), pointer :: nAdvCellsForEdge, nEdgesOnEdge
+      integer, dimension(:,:), pointer :: cellsOnEdge, advCellsForEdge, edgesOnEdge
+      real (kind=RKIND), dimension(:), pointer :: invDvEdge, fzm, fzp, coeffs_edge_midpoint_own
+      real (kind=RKIND), dimension(:,:), pointer :: adv_coefs, adv_coefs_3rd, coeffs_edge_midpoint, ru, ru_save, &
+                                                    theta_m, theta_m_save, w, flux_theta_edge, flux_w_edge, ru_midpoint
+
+      call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'nAdvCellsForEdge', nAdvCellsForEdge)
+      call mpas_pool_get_array(mesh, 'advCellsForEdge', advCellsForEdge)
+      call mpas_pool_get_array(mesh, 'adv_coefs', adv_coefs)
+      call mpas_pool_get_array(mesh, 'adv_coefs_3rd', adv_coefs_3rd)
+      call mpas_pool_get_array(mesh, 'invDvEdge', invDvEdge)
+      call mpas_pool_get_array(mesh, 'fzm', fzm)
+      call mpas_pool_get_array(mesh, 'fzp', fzp)
+      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
+      call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint', coeffs_edge_midpoint)
+      call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_own', coeffs_edge_midpoint_own)
+      call mpas_pool_get_array(diag, 'ru', ru)
+      call mpas_pool_get_array(diag, 'ru_save', ru_save)
+      call mpas_pool_get_array(state, 'theta_m', theta_m, 2)
+      call mpas_pool_get_array(state, 'theta_m', theta_m_save, 1)
+      call mpas_pool_get_array(state, 'w', w, 2)
+      call mpas_pool_get_array(diag, 'flux_theta_edge', flux_theta_edge)
+      call mpas_pool_get_array(diag, 'flux_w_edge', flux_w_edge)
+      call mpas_pool_get_array(diag, 'ru_midpoint', ru_midpoint)
+
+      call atm_compute_edge_fluxes_work(nCells, nEdges, rk_step, cellsOnEdge, nAdvCellsForEdge, advCellsForEdge, &
+                                        adv_coefs, adv_coefs_3rd, invDvEdge, fzm, fzp, nEdgesOnEdge, edgesOnEdge, &
+                                        coeffs_edge_midpoint, coeffs_edge_midpoint_own, ru, ru_save, theta_m, theta_m_save, &
+                                        w, flux_theta_edge, flux_w_edge, ru_midpoint, edgeStart, edgeEnd)
+
+   end subroutine atm_compute_edge_fluxes
+
+
+   subroutine atm_compute_edge_fluxes_work(nCells, nEdges, rk_step, cellsOnEdge, nAdvCellsForEdge, advCellsForEdge, &
+                                           adv_coefs, adv_coefs_3rd, invDvEdge, fzm, fzp, nEdgesOnEdge, edgesOnEdge, &
+                                           coeffs_edge_midpoint, coeffs_edge_midpoint_own, ru, ru_save, theta_m, theta_m_save, &
+                                           w, flux_theta_edge, flux_w_edge, ru_midpoint, edgeStart, edgeEnd)
+
+      implicit none
+
+      integer, intent(in) :: nCells, nEdges, rk_step, edgeStart, edgeEnd
+      integer, dimension(2,nEdges+1), intent(in) :: cellsOnEdge
+      integer, dimension(nEdges+1), intent(in) :: nAdvCellsForEdge, nEdgesOnEdge
+      integer, dimension(:,:), intent(in) :: advCellsForEdge, edgesOnEdge
+      real (kind=RKIND), dimension(:,:), intent(in) :: adv_coefs, adv_coefs_3rd, coeffs_edge_midpoint
+      real (kind=RKIND), dimension(nEdges+1), intent(in) :: invDvEdge, coeffs_edge_midpoint_own
+      real (kind=RKIND), dimension(nVertLevels), intent(in) :: fzm, fzp
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1), intent(in) :: ru, ru_save
+      real (kind=RKIND), dimension(nVertLevels,nCells+1), intent(in) :: theta_m, theta_m_save
+      real (kind=RKIND), dimension(nVertLevels+1,nCells+1), intent(in) :: w
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1), intent(inout) :: flux_theta_edge, ru_midpoint
+      real (kind=RKIND), dimension(nVertLevels+1,nEdges+1), intent(inout) :: flux_w_edge
+
+      real (kind=RKIND), dimension(nVertLevels) :: ft, fw
+      real (kind=RKIND) :: scalar_weight, ru_edge_w
+      integer :: iEdge, j, k, iAdvCell, cell1, cell2, eoe
+
+      !$acc parallel default(present)
+      !$acc loop gang worker private(ft, fw)
+      do iEdge = edgeStart, edgeEnd
+
+         !$acc loop vector
+         do k = 1, nVertLevels
+            ft(k) = 0.0_RKIND
+            fw(k) = 0.0_RKIND
+         end do
+
+         !$acc loop seq
+         do j = 1, nAdvCellsForEdge(iEdge)
+            iAdvCell = advCellsForEdge(j,iEdge)
+            !$acc loop vector
+            do k = 1, nVertLevels
+               scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru(k,iEdge)) * adv_coefs_3rd(j,iEdge)
+               ft(k) = ft(k) + scalar_weight * theta_m(k,iAdvCell)
+            end do
+            !$acc loop vector
+            do k = 2, nVertLevels
+               ru_edge_w = fzm(k)*ru(k,iEdge) + fzp(k)*ru(k-1,iEdge)
+               scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru_edge_w) * adv_coefs_3rd(j,iEdge)
+               fw(k) = fw(k) + scalar_weight * w(k,iAdvCell)
+            end do
+         end do
+
+!DIR$ IVDEP
+         !$acc loop vector
+         do k = 1, nVertLevels
+            flux_theta_edge(k,iEdge) = ru(k,iEdge) * ft(k) * invDvEdge(iEdge)
+         end do
+         if (rk_step > 1) then
+            cell1 = cellsOnEdge(1,iEdge)
+            cell2 = cellsOnEdge(2,iEdge)
+!DIR$ IVDEP
+            !$acc loop vector
+            do k = 1, nVertLevels
+               flux_theta_edge(k,iEdge) = flux_theta_edge(k,iEdge) &
+                                          + (ru_save(k,iEdge)-ru(k,iEdge)) * 0.5_RKIND*(theta_m_save(k,cell2)+theta_m_save(k,cell1))
+            end do
+         end if
+
+         flux_w_edge(1,iEdge) = 0.0_RKIND
+         flux_w_edge(nVertLevels+1,iEdge) = 0.0_RKIND
+!DIR$ IVDEP
+         !$acc loop vector
+         do k = 2, nVertLevels
+            flux_w_edge(k,iEdge) = (fzm(k)*ru(k,iEdge) + fzp(k)*ru(k-1,iEdge)) * fw(k) * invDvEdge(iEdge)
+         end do
+
+         !$acc loop vector
+         do k = 1, nVertLevels
+            ru_midpoint(k,iEdge) = coeffs_edge_midpoint_own(iEdge) * ru(k,iEdge)
+         end do
+         !$acc loop seq
+         do j = 1, nEdgesOnEdge(iEdge)
+            eoe = edgesOnEdge(j,iEdge)
+!DIR$ IVDEP
+            !$acc loop vector
+            do k = 1, nVertLevels
+               ru_midpoint(k,iEdge) = ru_midpoint(k,iEdge) + coeffs_edge_midpoint(j,iEdge) * ru(k,eoe)
+            end do
+         end do
+
+      end do
+      !$acc end parallel
+
+   end subroutine atm_compute_edge_fluxes_work
+
+
+   !-----------------------------------------------------------------------
+   !  routine atm_edge_midpoint_ruavg
+   !
+   !> \brief Midpoint mass flux in the time-averaged mass flux of the scalar transport
+   !> \author Pedro Peixoto
+   !> \date   17 November 2026
+   !> \details
+   !>  With config_edge_midpoint_flux the mass of a cell changes in each large step
+   !>  by the divergence of the midpoint flux of ru_save plus that of the acoustic
+   !>  increments at x_t, so ruAvg gets the same correction, (midpoint flux of
+   !>  ru_save) - ru_save, on the edges edgeStart:edgeEnd.
+   !
+   !-----------------------------------------------------------------------
+   subroutine atm_edge_midpoint_ruavg(diag, mesh, edgeStart, edgeEnd)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: diag
+      type (mpas_pool_type), intent(in) :: mesh
+      integer, intent(in) :: edgeStart, edgeEnd
+
+      integer, pointer :: nEdges
+      integer, dimension(:), pointer :: nEdgesOnEdge
+      integer, dimension(:,:), pointer :: edgesOnEdge
+      real (kind=RKIND), dimension(:), pointer :: coeffs_edge_midpoint_own
+      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint, ruAvg, ru_save
+
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
+      call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint', coeffs_edge_midpoint)
+      call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_own', coeffs_edge_midpoint_own)
+      call mpas_pool_get_array(diag, 'ruAvg', ruAvg)
+      call mpas_pool_get_array(diag, 'ru_save', ru_save)
+
+      call atm_edge_midpoint_ruavg_work(nEdges, nEdgesOnEdge, edgesOnEdge, coeffs_edge_midpoint, coeffs_edge_midpoint_own, &
+                                        ruAvg, ru_save, edgeStart, edgeEnd)
+
+   end subroutine atm_edge_midpoint_ruavg
+
+
+   subroutine atm_edge_midpoint_ruavg_work(nEdges, nEdgesOnEdge, edgesOnEdge, coeffs_edge_midpoint, coeffs_edge_midpoint_own, &
+                                           ruAvg, ru_save, edgeStart, edgeEnd)
+
+      implicit none
+
+      integer, intent(in) :: nEdges, edgeStart, edgeEnd
+      integer, dimension(nEdges+1), intent(in) :: nEdgesOnEdge
+      integer, dimension(:,:), intent(in) :: edgesOnEdge
+      real (kind=RKIND), dimension(:,:), intent(in) :: coeffs_edge_midpoint
+      real (kind=RKIND), dimension(nEdges+1), intent(in) :: coeffs_edge_midpoint_own
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1), intent(inout) :: ruAvg
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1), intent(in) :: ru_save
+
+      real (kind=RKIND), dimension(nVertLevels) :: fmid
+      integer :: iEdge, j, k, eoe
+
+      !$acc parallel default(present)
+      !$acc loop gang worker private(fmid)
+      do iEdge = edgeStart, edgeEnd
+         !$acc loop vector
+         do k = 1, nVertLevels
+            fmid(k) = coeffs_edge_midpoint_own(iEdge) * ru_save(k,iEdge)
+         end do
+         !$acc loop seq
+         do j = 1, nEdgesOnEdge(iEdge)
+            eoe = edgesOnEdge(j,iEdge)
+!DIR$ IVDEP
+            !$acc loop vector
+            do k = 1, nVertLevels
+               fmid(k) = fmid(k) + coeffs_edge_midpoint(j,iEdge) * ru_save(k,eoe)
+            end do
+         end do
+!DIR$ IVDEP
+         !$acc loop vector
+         do k = 1, nVertLevels
+            ruAvg(k,iEdge) = ruAvg(k,iEdge) + fmid(k) - ru_save(k,iEdge)
+         end do
+      end do
+      !$acc end parallel
+
+   end subroutine atm_edge_midpoint_ruavg_work
 
 
    !-----------------------------------------------------------------------
@@ -402,6 +677,72 @@ module mpas_atm_consistent_operators
       end do
 
    end subroutine perot_tangential_weights
+
+
+   ! whether the stencil of the midpoint flux of an edge (the edge and its edgesOnEdge) is in the block
+   logical function midpoint_stencil_ok(iEdge, n, eoe, vertices, nEdges, nVertices, edge_ok)
+
+      implicit none
+
+      integer, intent(in) :: iEdge, n, nEdges, nVertices
+      integer, dimension(:), intent(in) :: eoe, vertices
+      logical, dimension(:), intent(in) :: edge_ok
+
+      midpoint_stencil_ok = edge_ok(iEdge) .and. all(vertices(1:2) >= 1 .and. vertices(1:2) <= nVertices) .and. &
+                            all(eoe(1:n) >= 1 .and. eoe(1:n) <= nEdges)
+      if (midpoint_stencil_ok) midpoint_stencil_ok = all(edge_ok(eoe(1:n)))
+
+   end function midpoint_stencil_ok
+
+
+   !-----------------------------------------------------------------------
+   !  routine edge_midpoint_weights
+   !
+   !> \brief Normal flux at the Voronoi edge midpoint from the fluxes at x_t
+   !> \author Pedro Peixoto
+   !> \date   17 November 2026
+   !> \details
+   !>  Fit of a linear vector field to the normal components at the points x_t of
+   !>  the edge and of its edgesOnEdge, in the plane tangent at x_t of the edge with
+   !>  the basis (n, k x n) and offsets in units of the arc between its cells. The
+   !>  flux at the projected midpoint x_m of the Voronoi edge is that at x_t plus
+   !>  n . (grad v) (x_m - x_t) of the fit: weight wown for the edge itself and
+   !>  w(1:n) for eoe(1:n), its edgesOnEdge.
+   !
+   !-----------------------------------------------------------------------
+   subroutine edge_midpoint_weights(iEdge, n, eoe, cells, vertices, xc, xv, xt, ne, w, wown)
+
+      implicit none
+
+      integer, intent(in) :: iEdge, n
+      integer, dimension(:), intent(in) :: eoe, cells, vertices
+      real (kind=R8KIND), dimension(:,:), intent(in) :: xc, xv, xt, ne
+      real (kind=R8KIND), dimension(:), intent(out) :: w
+      real (kind=R8KIND), intent(out) :: wown
+
+      real (kind=R8KIND), dimension(nfit,n+1) :: P
+      real (kind=R8KIND), dimension(3) :: b, e1, e2, dx
+      real (kind=R8KIND), dimension(n+1) :: g
+      real (kind=R8KIND) :: L
+      integer, dimension(n+1) :: stencil
+
+      stencil(1) = iEdge
+      stencil(2:n+1) = eoe(1:n)
+      b = xt(:,iEdge)
+      e1 = ne(:,iEdge)
+      e2 = unit(cross(b, e1))
+      L = atan2(norm2(cross(xc(:,cells(1)), xc(:,cells(2)))), dot_product(xc(:,cells(1)), xc(:,cells(2))))
+
+      call lsq2_fit(b, n+1, xt(:,stencil), ne(:,stencil), e1, e2, L, P)
+
+      dx = project(unit(xv(:,vertices(1)) + xv(:,vertices(2))), b) - b
+      g = (P(fit_dadx1,:) * dot_product(dx, e1) + P(fit_dadx2,:) * dot_product(dx, e2)) / L
+
+      wown = 1.0_R8KIND + g(1)
+      w = 0.0_R8KIND
+      w(1:n) = g(2:n+1)
+
+   end subroutine edge_midpoint_weights
 
 
    !-----------------------------------------------------------------------
