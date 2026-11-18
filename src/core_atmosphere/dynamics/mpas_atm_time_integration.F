@@ -3903,7 +3903,9 @@ module atm_time_integration
 !DIR$ IVDEP
               !$acc loop vector
               do k=1,nVertLevels
-                 pgrad = ((rtheta_pp(k,cell2)-rtheta_pp(k,cell1))*invDcEdge(iEdge) )/(.5*(zz(k,cell2)+zz(k,cell1)))
+                 ! zz*rtheta_pp, the linearisation of the large-step pressure gradient (Klemp et al. 2007, eq. 13)
+                 pgrad = ((zz(k,cell2)*rtheta_pp(k,cell2)-zz(k,cell1)*rtheta_pp(k,cell1))*invDcEdge(iEdge) ) &
+                         /(.5*(zz(k,cell2)+zz(k,cell1)))
                  pgrad = cqu(k,iEdge)*0.5*c2*(exner(k,cell1)+exner(k,cell2))*pgrad
                  pgrad = pgrad + 0.5*zxu(k,iEdge)*gravity*(rho_pp(k,cell1)+rho_pp(k,cell2))
                  ru_p(k,iEdge) = ru_p(k,iEdge) + dts*(tend_ru(k,iEdge) - (1.0_RKIND - specZoneMaskEdge(iEdge))*pgrad)
