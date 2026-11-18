@@ -125,16 +125,16 @@ module atm_time_integration
    !>  Specifically,the following are checked by this routine:
    !>
    !>  1) config_positive_definite == .false.
+   !>  2) 0 <= config_ke_cell_weight <= 1
    !>
-   !>  At present only a warning is printed in the case of a failed check,
-   !>  and a value of 0 is always returned by the ierr argument. However,
-   !>  warnings may be escalated to errors in future.
+   !>  A failed check 1) only prints a warning. A failed check 2) prints an
+   !>  error and returns a non-zero value in the ierr argument.
    !
    !-----------------------------------------------------------------------
    subroutine mpas_atm_dynamics_checks(dminfo, blockList, streamManager, ierr)
 
        use mpas_log, only : mpas_log_write
-       use mpas_derived_types, only : dm_info, block_type, MPAS_LOG_WARN
+       use mpas_derived_types, only : dm_info, block_type, MPAS_LOG_WARN, MPAS_LOG_ERR
        use mpas_pool_routines, only : mpas_pool_get_config
 
        implicit none
@@ -146,7 +146,10 @@ module atm_time_integration
 
        logical, pointer :: config_positive_definite
        real (kind=RKIND), pointer :: config_epssm
+       real (kind=RKIND), pointer :: config_ke_cell_weight
 
+
+       ierr = 0
 
        call mpas_log_write('')
        call mpas_log_write('Checking consistency of dynamics settings...')
@@ -200,10 +203,17 @@ module atm_time_integration
            end if
        end if
 
+       nullify(config_ke_cell_weight)
+       call mpas_pool_get_config(blocklist % configs, 'config_ke_cell_weight', config_ke_cell_weight)
+
+       if (config_ke_cell_weight < 0.0_RKIND .or. config_ke_cell_weight > 1.0_RKIND) then
+           call mpas_log_write('config_ke_cell_weight = $r is outside [0, 1].', realArgs=(/config_ke_cell_weight/), &
+                               messageType=MPAS_LOG_ERR)
+           ierr = 1
+       end if
+
        call mpas_log_write(' ----- done checking dynamics settings -----')
        call mpas_log_write('')
-
-       ierr = 0
 
    end subroutine mpas_atm_dynamics_checks
 
@@ -7001,9 +7011,11 @@ module atm_time_integration
       integer, dimension(:), pointer :: nEdgesOnCell, nEdgesOnEdge
 
       real (kind=RKIND), pointer :: config_apvm_upwinding
+      real (kind=RKIND), pointer :: config_ke_cell_weight
 
 
       call mpas_pool_get_config(configs, 'config_apvm_upwinding', config_apvm_upwinding)
+      call mpas_pool_get_config(configs, 'config_ke_cell_weight', config_ke_cell_weight)
 
       call mpas_pool_get_array(state, 'rho_zz', h, time_lev)
       call mpas_pool_get_array(state, 'u', u, time_lev)
@@ -7049,7 +7061,7 @@ module atm_time_integration
       call mpas_pool_get_dimension(mesh, 'vertexDegree', vertexDegree)
 
       call atm_compute_solve_diagnostics_work(nCells, nEdges, nVertices, &
-               vertexDegree, dt, config_apvm_upwinding, &
+               vertexDegree, dt, config_apvm_upwinding, config_ke_cell_weight, &
                fVertex, fEdge, invAreaTriangle, invAreaCell, dvEdge, dcEdge, invDvEdge, invDcEdge, &
                weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
                gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
@@ -7061,7 +7073,7 @@ module atm_time_integration
 
 
    subroutine atm_compute_solve_diagnostics_work(nCells, nEdges, nVertices, &
-            vertexDegree, dt, config_apvm_upwinding, &
+            vertexDegree, dt, config_apvm_upwinding, config_ke_cell_weight, &
             fVertex, fEdge, invAreaTriangle, invAreaCell, dvEdge, dcEdge, invDvEdge, invDcEdge, &
             weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
             gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
@@ -7077,7 +7089,7 @@ module atm_time_integration
       ! Dummy arguments
       !
       integer, intent(in) :: nCells, nEdges, nVertices, vertexDegree
-      real (kind=RKIND), intent(in) :: dt, config_apvm_upwinding
+      real (kind=RKIND), intent(in) :: dt, config_apvm_upwinding, config_ke_cell_weight
       real (kind=RKIND), dimension(nVertices+1) :: fVertex
       real (kind=RKIND), dimension(nEdges+1) :: fEdge
       real (kind=RKIND), dimension(nVertices+1) :: invAreaTriangle
@@ -7273,7 +7285,7 @@ module atm_time_integration
          ! adjust ke at cell vertices - AG's new KE construction, part 2
          !
 
-         ke_fact = 1.0 - .375
+         ke_fact = config_ke_cell_weight
 
          !$acc parallel default(present)
          !$acc loop collapse(2)
