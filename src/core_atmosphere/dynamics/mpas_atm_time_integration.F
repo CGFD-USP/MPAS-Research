@@ -3900,10 +3900,6 @@ module atm_time_integration
 
       integer, pointer :: nEdges, nCellsSolve
 
-      logical, pointer :: config_acoustic_pgf_zz
-
-      call mpas_pool_get_config(configs, 'config_acoustic_pgf_zz', config_acoustic_pgf_zz)
-
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
@@ -3981,8 +3977,7 @@ module atm_time_integration
                                    invAreaCell, cofrz, dvEdge, nEdgesOnCell, cellsOnEdge, edgesOnCell, edgesOnCell_sign, &
                                    dts, small_step, cf1, cf2, cf3, &
                                    etp, etm, ewp, ewm,    &
-                                   specZoneMaskEdge, specZoneMaskCell, &
-                                   config_acoustic_pgf_zz &
+                                   specZoneMaskEdge, specZoneMaskCell &
                                    )
 
    end subroutine atm_advance_acoustic_step
@@ -3996,8 +3991,7 @@ module atm_time_integration
                                    invAreaCell, cofrz, dvEdge, nEdgesOnCell, cellsOnEdge, edgesOnCell, edgesOnCell_sign, &
                                    dts, small_step, cf1, cf2, cf3, &
                                    etp, etm, ewp, ewm,    &
-                                   specZoneMaskEdge, specZoneMaskCell, &
-                                   pgf_zz &
+                                   specZoneMaskEdge, specZoneMaskCell &
                                    )
 
       use mpas_atm_dimensions
@@ -4072,7 +4066,6 @@ module atm_time_integration
       integer, intent(in) :: small_step
       real (kind=RKIND), intent(in) :: dts, cf1, cf2, cf3
       real (kind=RKIND), dimension(nVertLevels) :: ts, rs
-      logical, intent(in) :: pgf_zz
 
 
       !
@@ -4113,12 +4106,9 @@ module atm_time_integration
 !DIR$ IVDEP
               !$acc loop vector
               do k=1,nVertLevels
-                 if (pgf_zz) then
-                    pgrad = ((zz(k,cell2)*rtheta_pp(k,cell2)-zz(k,cell1)*rtheta_pp(k,cell1))*invDcEdge(iEdge) ) &
-                            /(.5*(zz(k,cell2)+zz(k,cell1)))
-                 else
-                    pgrad = ((rtheta_pp(k,cell2)-rtheta_pp(k,cell1))*invDcEdge(iEdge) )/(.5*(zz(k,cell2)+zz(k,cell1)))
-                 end if
+                 ! zz*rtheta_pp, the linearisation of the large-step pressure gradient (Klemp et al. 2007, eq. 13)
+                 pgrad = ((zz(k,cell2)*rtheta_pp(k,cell2)-zz(k,cell1)*rtheta_pp(k,cell1))*invDcEdge(iEdge) ) &
+                         /(.5*(zz(k,cell2)+zz(k,cell1)))
                  pgrad = cqu(k,iEdge)*0.5*c2*(exner(k,cell1)+exner(k,cell2))*pgrad
                  pgrad = pgrad + 0.5*zxu(k,iEdge)*gravity*(rho_pp(k,cell1)+rho_pp(k,cell2))
                  ru_p(k,iEdge) = ru_p(k,iEdge) + dts*(tend_ru(k,iEdge) - (1.0_RKIND - specZoneMaskEdge(iEdge))*pgrad)
