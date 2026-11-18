@@ -281,6 +281,11 @@
                      description="Kinetic energy at cells and vertices: from the squares of the edge velocities (trsk), or from the velocity vector reconstructed from the normal velocities of the edges with the Perot weights (perot) or a second-order least-squares fit (lsq2). With perot and lsq2 the same reconstruction gives the cell velocity (uReconstruct*)."
                      possible_values="`trsk', `perot' or `lsq2'"/>
 
+                <nml_option name="config_tangential_reconstruction" type="character" default_value="trsk" in_defaults="false"
+                     units="-"
+                     description="Tangential velocity of an edge in the nonlinear Coriolis term and in the diagnosed v: from weightsOnEdge (trsk), or as the mean of the Perot velocities of its two cells along the edge, including the weight of the edge itself (perot)"
+                     possible_values="`trsk' or `perot'"/>
+
                 <nml_option name="config_h_ScaleWithMesh" type="logical" default_value="true" in_defaults="false"
                      units="-"
                      description="Scale eddy viscosities with mesh-density function for horizontal diffusion"
@@ -495,6 +500,9 @@
                 <package name="les"
                          description="Variables and options associated with LES models"
                          active_when="trim(config_les_model) /= 'none'"/>
+                <package name="perot_tangential"
+                         description="Tangential velocity from the Perot reconstructions of the cells"
+                         active_when="trim(config_tangential_reconstruction) == 'perot'"/>
                 <package name="sfclayer"
                          description="Variables and options associated with surface layer physics"
                          active_when="(trim(config_physics_suite) /= 'none' .and. trim(config_sfclayer_scheme) == 'suite') .or.  any(trim(config_sfclayer_scheme) == [ character(len=StrKind) :: 'sf_monin_obukhov', 'sf_monin_obukhov_rev', 'sf_mynn' ])"/>
@@ -1437,6 +1445,13 @@
 
                 <var name="weightsOnEdge" type="real" dimensions="maxEdges2 nEdges" units="unitless"
                      description="Weights used in reconstruction of tangential velocity for an edge"/>
+
+                <var name="weightsOnEdge_perot" type="real" dimensions="maxEdges2 nEdges" units="unitless"
+                     description="Weights of the tangential velocity from the Perot reconstructions of the cells, for edgesOnEdge"
+                     packages="perot_tangential"/>
+
+                <var name="weightOnEdge_perot_own" type="real" dimensions="nEdges" units="unitless"
+                     description="Weight of the edge itself in its tangential velocity from the Perot reconstructions of the cells"/>
 
                 <var name="dvEdge" type="real" dimensions="nEdges" units="m"
                      description="Spherical distance between vertex endpoints of an edge"/>
