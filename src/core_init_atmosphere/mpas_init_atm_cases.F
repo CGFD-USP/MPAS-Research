@@ -449,7 +449,7 @@ module init_atm_cases
 
       !initialization of surface input variables technically not needed to run our current set of
       !idealized test cases:
-      if (config_init_case < 7 .or. config_init_case == 11)  then
+      if (config_init_case < 7 .or. config_init_case == 11 .or. (config_init_case >= 21 .and. config_init_case <= 23))  then
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
             call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
