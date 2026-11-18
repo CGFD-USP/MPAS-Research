@@ -14,6 +14,8 @@
                      description="The largest number of neighbors that a primal mesh cell may have"/>
                 <dim name="maxEdges2"
                      description="Twice the value of maxEdges"/>
+                <dim name="maxEdges2P1"        definition="maxEdges2+1"
+                     description="One more than maxEdges2"/>
                 <dim name="nVertices"
                      description="The number of Delaunay triangles in the dual mesh, equivalent to the number of cell corners in the primal mesh"/>
                 <dim name="TWO"                definition="2"
@@ -510,6 +512,9 @@
                 <package name="les"
                          description="Variables and options associated with LES models"
                          active_when="trim(config_les_model) /= 'none'"/>
+                <package name="ke_reconstruction"
+                         description="Kinetic energy from the velocity vectors reconstructed at cells and vertices"
+                         active_when="trim(config_ke_reconstruction) /= 'trsk'"/>
                 <package name="perot_tangential"
                          description="Tangential velocity from the Perot reconstructions of the cells"
                          active_when="trim(config_tangential_reconstruction) == 'perot'"/>
@@ -1459,12 +1464,17 @@
                 <var name="weightsOnEdge" type="real" dimensions="maxEdges2 nEdges" units="unitless"
                      description="Weights used in reconstruction of tangential velocity for an edge"/>
 
-                <var name="weightsOnEdge_perot" type="real" dimensions="maxEdges2 nEdges" units="unitless"
-                     description="Weights of the tangential velocity from the Perot reconstructions of the cells, for edgesOnEdge"
+                <var name="nEdgesOnEdge_perot" type="integer" dimensions="nEdges" units="-"
+                     description="Number of edges in the Perot tangential velocity of an edge"
                      packages="perot_tangential"/>
 
-                <var name="weightOnEdge_perot_own" type="real" dimensions="nEdges" units="unitless"
-                     description="Weight of the edge itself in its tangential velocity from the Perot reconstructions of the cells"/>
+                <var name="edgesOnEdge_perot" type="integer" dimensions="maxEdges2P1 nEdges" units="-"
+                     description="Edges in the Perot tangential velocity of an edge: its edgesOnEdge, then the edge itself"
+                     packages="perot_tangential"/>
+
+                <var name="weightsOnEdge_perot" type="real" dimensions="maxEdges2P1 nEdges" units="unitless"
+                     description="Weights of edgesOnEdge_perot in the Perot tangential velocity of an edge"
+                     packages="perot_tangential"/>
 
                 <var name="coeffs_edge_midpoint" type="real" dimensions="maxEdges2 nEdges" units="unitless"
                      description="Weights of the fluxes at the edge points of edgesOnEdge in the flux at the Voronoi edge midpoint"
@@ -1681,7 +1691,8 @@
                      description="Coefficients to reconstruct velocity vectors at cell centers"/>
 
                 <var name="coeffs_reconstruct_vertex" type="real" dimensions="R3 vertexDegree nVertices" units="unitless"
-                     description="Coefficients to reconstruct velocity vectors at vertices from their edges (config_ke_reconstruction)"/>
+                     description="Coefficients to reconstruct velocity vectors at vertices from their edges (config_ke_reconstruction)"
+                     packages="ke_reconstruction"/>
 
                 <var name="east" type="real" dimensions="R3 nCells" units="unitless"
                      description="Cartesian components of the local unit vector pointing east"/>

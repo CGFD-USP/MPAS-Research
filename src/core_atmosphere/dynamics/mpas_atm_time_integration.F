@@ -346,8 +346,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct_vertex
       character (len=StrKIND), pointer :: config_ke_reconstruction
+      integer, dimension(:), pointer :: nEdgesOnEdge_perot
+      integer, dimension(:,:), pointer :: edgesOnEdge_perot
       real (kind=RKIND), dimension(:,:), pointer :: weightsOnEdge_perot
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
       character (len=StrKIND), pointer :: config_tangential_reconstruction
       real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint
       real (kind=RKIND), dimension(:), pointer :: coeffs_edge_midpoint_own
@@ -450,10 +451,6 @@ module atm_time_integration
 
       call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
       !$acc enter data copyin(weightsOnEdge)
-
-      ! with any option, since the regions of the nonlinear Coriolis term and of v reference it
-      call mpas_pool_get_array(mesh, 'weightOnEdge_perot_own', weightOnEdge_perot_own)
-      !$acc enter data copyin(weightOnEdge_perot_own)
 
       call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
       !$acc enter data copyin(cellsOnVertex)
@@ -596,8 +593,10 @@ module atm_time_integration
       call mpas_pool_get_config(domain % blocklist % configs, 'config_tangential_reconstruction', &
                                 config_tangential_reconstruction)
       if (trim(config_tangential_reconstruction) == 'perot') then
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge_perot', nEdgesOnEdge_perot)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge_perot', edgesOnEdge_perot)
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
-         !$acc enter data copyin(weightsOnEdge_perot)
+         !$acc enter data copyin(nEdgesOnEdge_perot, edgesOnEdge_perot, weightsOnEdge_perot)
       end if
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
@@ -670,8 +669,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:), pointer :: fVertex
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
       character (len=StrKIND), pointer :: config_ke_reconstruction
+      integer, dimension(:), pointer :: nEdgesOnEdge_perot
+      integer, dimension(:,:), pointer :: edgesOnEdge_perot
       real (kind=RKIND), dimension(:,:), pointer :: weightsOnEdge_perot
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
       character (len=StrKIND), pointer :: config_tangential_reconstruction
 
       nullify(mesh)
@@ -784,10 +784,6 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
       !$acc enter data copyin(weightsOnEdge)
 
-      ! with any option, since the regions of the nonlinear Coriolis term and of v reference it
-      call mpas_pool_get_array(mesh, 'weightOnEdge_perot_own', weightOnEdge_perot_own)
-      !$acc enter data copyin(weightOnEdge_perot_own)
-
       call mpas_pool_get_array(mesh, 'verticesOnCell', verticesOnCell)
       !$acc enter data copyin(verticesOnCell)
 
@@ -815,8 +811,10 @@ module atm_time_integration
 
       call mpas_pool_get_config(block % configs, 'config_tangential_reconstruction', config_tangential_reconstruction)
       if (trim(config_tangential_reconstruction) == 'perot') then
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge_perot', nEdgesOnEdge_perot)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge_perot', edgesOnEdge_perot)
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
-         !$acc enter data copyin(weightsOnEdge_perot)
+         !$acc enter data copyin(nEdgesOnEdge_perot, edgesOnEdge_perot, weightsOnEdge_perot)
       end if
 
       MPAS_ACC_TIMER_STOP('first_compute_solve_diagnostics [ACC_data_xfer]')
@@ -883,8 +881,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:), pointer :: fVertex
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
       character (len=StrKIND), pointer :: config_ke_reconstruction
+      integer, dimension(:), pointer :: nEdgesOnEdge_perot
+      integer, dimension(:,:), pointer :: edgesOnEdge_perot
       real (kind=RKIND), dimension(:,:), pointer :: weightsOnEdge_perot
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
       character (len=StrKIND), pointer :: config_tangential_reconstruction
 
       nullify(mesh)
@@ -987,9 +986,6 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
       !$acc exit data delete(weightsOnEdge)
 
-      call mpas_pool_get_array(mesh, 'weightOnEdge_perot_own', weightOnEdge_perot_own)
-      !$acc exit data delete(weightOnEdge_perot_own)
-
       call mpas_pool_get_array(mesh, 'verticesOnCell', verticesOnCell)
       !$acc exit data delete(verticesOnCell)
 
@@ -1017,8 +1013,10 @@ module atm_time_integration
 
       call mpas_pool_get_config(block % configs, 'config_tangential_reconstruction', config_tangential_reconstruction)
       if (trim(config_tangential_reconstruction) == 'perot') then
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge_perot', nEdgesOnEdge_perot)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge_perot', edgesOnEdge_perot)
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
-         !$acc exit data delete(weightsOnEdge_perot)
+         !$acc exit data delete(nEdgesOnEdge_perot, edgesOnEdge_perot, weightsOnEdge_perot)
       end if
 
       MPAS_ACC_TIMER_STOP('first_compute_solve_diagnostics [ACC_data_xfer]')
@@ -1708,8 +1706,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct_vertex
       character (len=StrKIND), pointer :: config_ke_reconstruction
+      integer, dimension(:), pointer :: nEdgesOnEdge_perot
+      integer, dimension(:,:), pointer :: edgesOnEdge_perot
       real (kind=RKIND), dimension(:,:), pointer :: weightsOnEdge_perot
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
       character (len=StrKIND), pointer :: config_tangential_reconstruction
       real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint
       real (kind=RKIND), dimension(:), pointer :: coeffs_edge_midpoint_own
@@ -1811,9 +1810,6 @@ module atm_time_integration
 
       call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
       !$acc exit data delete(weightsOnEdge)
-
-      call mpas_pool_get_array(mesh, 'weightOnEdge_perot_own', weightOnEdge_perot_own)
-      !$acc exit data delete(weightOnEdge_perot_own)
 
       call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
       !$acc exit data delete(cellsOnVertex)
@@ -1956,8 +1952,10 @@ module atm_time_integration
       call mpas_pool_get_config(domain % blocklist % configs, 'config_tangential_reconstruction', &
                                 config_tangential_reconstruction)
       if (trim(config_tangential_reconstruction) == 'perot') then
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge_perot', nEdgesOnEdge_perot)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge_perot', edgesOnEdge_perot)
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
-         !$acc exit data delete(weightsOnEdge_perot)
+         !$acc exit data delete(nEdgesOnEdge_perot, edgesOnEdge_perot, weightsOnEdge_perot)
       end if
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
@@ -6128,8 +6126,6 @@ module atm_time_integration
       logical :: nopbl
 
       character (len=StrKIND), pointer :: config_tangential_reconstruction
-      logical :: own_edge_weight
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
 
       logical, pointer :: config_edge_midpoint_flux
       real (kind=RKIND), dimension(:,:), pointer :: ru_div, flux_theta_midpoint, flux_w_midpoint
@@ -6216,19 +6212,20 @@ module atm_time_integration
           nopbl = .true.
       end if
 
+      ! stencil and weights of the tangential velocity, the only use of these three arrays in the work routine
       call mpas_pool_get_config(configs, 'config_tangential_reconstruction', config_tangential_reconstruction)
-      own_edge_weight = trim(config_tangential_reconstruction) == 'perot'
-      if (own_edge_weight) then
+      if (trim(config_tangential_reconstruction) == 'perot') then
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge_perot', nEdgesOnEdge)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge_perot', edgesOnEdge)
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge)
       else
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
          call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
       end if
-      call mpas_pool_get_array(mesh, 'weightOnEdge_perot_own', weightOnEdge_perot_own)
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(mesh, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
-      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
-      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
       call mpas_pool_get_array(mesh, 'edgesOnCell_sign', edgesOnCell_sign)
       call mpas_pool_get_array(mesh, 'edgesOnVertex', edgesOnVertex)
@@ -6344,7 +6341,7 @@ module atm_time_integration
          config_rayleigh_damp_u, config_rayleigh_damp_u_timescale_days, & 
          config_number_rayleigh_damp_u_levels, config_number_cam_damping_levels, &
          config_surface_heat_flux, config_surface_moisture_flux, config_surface_drag_coefficient, &
-         rthdynten, ustm, hfx, qfx, own_edge_weight, weightOnEdge_perot_own, &
+         rthdynten, ustm, hfx, qfx, &
          config_edge_midpoint_flux, flux_theta_midpoint, flux_w_midpoint, &
          cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
          cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
@@ -6380,7 +6377,7 @@ module atm_time_integration
       config_rayleigh_damp_u, config_rayleigh_damp_u_timescale_days, &
       config_number_rayleigh_damp_u_levels, config_number_cam_damping_levels, &
       config_surface_heat_flux, config_surface_moisture_flux, config_surface_drag_coefficient, &
-      rthdynten, ustm, hfx, qfx, own_edge_weight, weightOnEdge_perot_own, &
+      rthdynten, ustm, hfx, qfx, &
       edge_midpoint_flux, flux_theta_midpoint, flux_w_midpoint, &
       cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
       cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
@@ -6408,7 +6405,7 @@ module atm_time_integration
       real (kind=RKIND), dimension(nVertices+1) :: invAreaTriangle
       real (kind=RKIND), dimension(nEdges+1) :: meshScalingDel2
       real (kind=RKIND), dimension(nEdges+1) :: meshScalingDel4
-      real (kind=RKIND), dimension(maxEdges2,nEdges+1) :: weightsOnEdge
+      real (kind=RKIND), dimension(:,:) :: weightsOnEdge    ! of MPAS, or the Perot weights with leading dimension maxEdges2P1
       real (kind=RKIND), dimension(nVertLevels+1,nCells+1) :: zgrid
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: rho_edge
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: rho_zz
@@ -6459,7 +6456,7 @@ module atm_time_integration
       integer, dimension(2,nEdges+1) :: cellsOnEdge
       integer, dimension(2,nEdges+1) :: verticesOnEdge
       integer, dimension(maxEdges,nCells+1) :: edgesOnCell
-      integer, dimension(maxEdges2,nEdges+1) :: edgesOnEdge
+      integer, dimension(:,:) :: edgesOnEdge    ! of MPAS, or the Perot stencil with leading dimension maxEdges2P1
       integer, dimension(maxEdges,nCells+1) :: cellsOnCell
       integer, dimension(vertexDegree,nVertices+1) :: edgesOnVertex
       integer, dimension(nCells+1) :: nEdgesOnCell
@@ -6519,9 +6516,6 @@ module atm_time_integration
       integer, intent(in) :: config_number_rayleigh_damp_u_levels, config_number_cam_damping_levels
 
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: rthdynten
-
-      logical, intent(in) :: own_edge_weight
-      real (kind=RKIND), dimension(nEdges+1) :: weightOnEdge_perot_own
 
       logical, intent(in) :: edge_midpoint_flux
       real (kind=RKIND), dimension(:,:) :: flux_theta_midpoint, flux_w_midpoint
@@ -6800,13 +6794,6 @@ module atm_time_integration
             end do
          end do
 
-         if (own_edge_weight) then
-            !$acc loop vector
-            do k=1,nVertLevels
-               q(k) = q(k) + weightOnEdge_perot_own(iEdge) * u(k,iEdge) * pv_edge(k,iEdge)
-            end do
-         end if
-
          if (perturbation_coriolis) then  !  this is correct only for constant f
             !$acc loop seq
             do j = 1,nEdgesOnEdge(iEdge)
@@ -6819,13 +6806,6 @@ module atm_time_integration
 !                 q(k) = q(k) - weightsOnEdge(j,iEdge) * reference_u * 0.729210E-04
                end do
             end do
-            if (own_edge_weight) then
-               !$acc loop vector
-               do k=1,nVertLevels
-                  reference_u = u_init(k) * cos(angleEdge(iEdge)) -  v_init(k) * sin(angleEdge(iEdge))
-                  q(k) = q(k) - weightOnEdge_perot_own(iEdge) * reference_u * fEdge(iEdge)
-               end do
-            end if
          end if
 
 !DIR$ IVDEP
@@ -7341,14 +7321,14 @@ module atm_time_integration
       real (kind=RKIND), pointer :: config_ke_cell_weight
       character (len=StrKIND), pointer :: config_ke_reconstruction
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
+      logical :: ke_reconstructed
       character (len=StrKIND), pointer :: config_tangential_reconstruction
-      logical :: own_edge_weight
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
 
 
       call mpas_pool_get_config(configs, 'config_apvm_upwinding', config_apvm_upwinding)
       call mpas_pool_get_config(configs, 'config_ke_cell_weight', config_ke_cell_weight)
       call mpas_pool_get_config(configs, 'config_ke_reconstruction', config_ke_reconstruction)
+      ke_reconstructed = trim(config_ke_reconstruction) /= 'trsk'
 
       call mpas_pool_get_array(state, 'rho_zz', h, time_lev)
       call mpas_pool_get_array(state, 'u', u, time_lev)
@@ -7364,14 +7344,17 @@ module atm_time_integration
       call mpas_pool_get_array(diag, 'gradPVn', gradPVn)
       call mpas_pool_get_array(diag, 'gradPVt', gradPVt)
 
+      ! stencil and weights of the tangential velocity, the only use of these three arrays in the work routine
       call mpas_pool_get_config(configs, 'config_tangential_reconstruction', config_tangential_reconstruction)
-      own_edge_weight = trim(config_tangential_reconstruction) == 'perot'
-      if (own_edge_weight) then
+      if (trim(config_tangential_reconstruction) == 'perot') then
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge_perot', nEdgesOnEdge)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge_perot', edgesOnEdge)
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge)
       else
+         call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+         call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
          call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
       end if
-      call mpas_pool_get_array(mesh, 'weightOnEdge_perot_own', weightOnEdge_perot_own)
       call mpas_pool_get_array(mesh, 'kiteAreasOnVertex', kiteAreasOnVertex)
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
@@ -7379,8 +7362,6 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'verticesOnCell', verticesOnCell)
       call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
-      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
-      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
       call mpas_pool_get_array(mesh, 'edgesOnVertex', edgesOnVertex)
       call mpas_pool_get_array(mesh, 'edgesOnVertex_sign', edgesOnVertex_sign)
       call mpas_pool_get_array(mesh, 'edgesOnCell_sign', edgesOnCell_sign)
@@ -7394,7 +7375,12 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'fVertex', fVertex)
       call mpas_pool_get_array(mesh, 'fEdge', fEdge)
       call mpas_pool_get_array(mesh, 'coeffs_reconstruct', coeffs_reconstruct)
-      call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+      if (ke_reconstructed) then
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+      end if
+
+      ! stand-in when the option is off, not read by the work routine
+      if (.not. ke_reconstructed) coeffs_reconstruct_vertex => coeffs_reconstruct
 
       call mpas_pool_get_dimension(mesh, 'nCells', nCells)
       call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
@@ -7408,8 +7394,7 @@ module atm_time_integration
                weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
                gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
                edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
-               trim(config_ke_reconstruction) /= 'trsk', coeffs_reconstruct, coeffs_reconstruct_vertex, &
-               own_edge_weight, weightOnEdge_perot_own, &
+               ke_reconstructed, coeffs_reconstruct, coeffs_reconstruct_vertex, &
                cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
                rk_step)
 
@@ -7422,7 +7407,7 @@ module atm_time_integration
             weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
             gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
             edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
-            ke_reconstructed, coeffs_reconstruct, coeffs_reconstruct_vertex, own_edge_weight, weightOnEdge_perot_own, &
+            ke_reconstructed, coeffs_reconstruct, coeffs_reconstruct_vertex, &
             cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
             rk_step)
 
@@ -7443,7 +7428,7 @@ module atm_time_integration
       real (kind=RKIND), dimension(nEdges+1) :: dcEdge
       real (kind=RKIND), dimension(nEdges+1) :: invDvEdge
       real (kind=RKIND), dimension(nEdges+1) :: invDcEdge
-      real (kind=RKIND), dimension(maxEdges2,nEdges+1) :: weightsOnEdge
+      real (kind=RKIND), dimension(:,:) :: weightsOnEdge    ! of MPAS, or the Perot weights with leading dimension maxEdges2P1
       real (kind=RKIND), dimension(3,nVertices+1) :: kiteAreasOnVertex
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: h_edge
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: h
@@ -7461,7 +7446,7 @@ module atm_time_integration
       integer, dimension(3,nVertices+1) :: cellsOnVertex
       integer, dimension(2,nEdges+1) :: verticesOnEdge
       integer, dimension(maxEdges,nCells+1) :: edgesOnCell
-      integer, dimension(maxEdges2,nEdges+1) :: edgesOnEdge
+      integer, dimension(:,:) :: edgesOnEdge    ! of MPAS, or the Perot stencil with leading dimension maxEdges2P1
       integer, dimension(3,nVertices+1) :: edgesOnVertex
       integer, dimension(maxEdges,nCells+1) :: kiteForCell
       integer, dimension(maxEdges,nCells+1) :: verticesOnCell
@@ -7471,9 +7456,7 @@ module atm_time_integration
       integer, dimension(nEdges+1) :: nEdgesOnEdge
       logical, intent(in) :: ke_reconstructed
       real (kind=RKIND), dimension(3,maxEdges,nCells+1) :: coeffs_reconstruct
-      real (kind=RKIND), dimension(3,vertexDegree,nVertices+1) :: coeffs_reconstruct_vertex
-      logical, intent(in) :: own_edge_weight
-      real (kind=RKIND), dimension(nEdges+1) :: weightOnEdge_perot_own
+      real (kind=RKIND), dimension(:,:,:) :: coeffs_reconstruct_vertex
 
       integer, intent(in) :: cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd
 
@@ -7763,13 +7746,6 @@ module atm_time_integration
               v(k,iEdge) = v(k,iEdge) + weightsOnEdge(i,iEdge) * u(k, eoe)
             end do
           end do
-          if (own_edge_weight) then
-!DIR$ IVDEP
-            !$acc loop vector
-            do k = 1,nVertLevels
-              v(k,iEdge) = v(k,iEdge) + weightOnEdge_perot_own(iEdge) * u(k,iEdge)
-            end do
-          end if
         end do
         !$acc end parallel
       end if

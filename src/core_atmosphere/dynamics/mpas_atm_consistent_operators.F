@@ -21,8 +21,8 @@
 !>     of the physics and the output changes.
 !>   - config_tangential_reconstruction = 'perot': the tangential velocity of an
 !>     edge as the mean of the Perot velocities of its two cells along the edge,
-!>     with weights weightsOnEdge_perot for its edgesOnEdge and
-!>     weightOnEdge_perot_own for the edge itself.
+!>     on the stencil nEdgesOnEdge_perot, edgesOnEdge_perot (its edgesOnEdge, then
+!>     the edge itself) with the weights weightsOnEdge_perot.
 !>   - config_edge_midpoint_flux: the normal flux at the midpoint of the Voronoi
 !>     edge from the fluxes at the edge points x_t of the edge and of its
 !>     edgesOnEdge, by a least-squares fit of a linear vector field (weights
@@ -36,8 +36,8 @@
 !>  onto the plane tangent at the cell, vertex or edge. A weight is computed only
 !>  where all its inputs are in the block; elsewhere the cell keeps the
 !>  coefficients of mpas_init_reconstruct, the vertex gets zero weights, the edge
-!>  the weights weightsOnEdge with a zero weight of its own, and the midpoint flux
-!>  is the flux at x_t.
+!>  the stencil and weights of MPAS (edgesOnEdge, weightsOnEdge), and the midpoint
+!>  flux is the flux at x_t.
 !
 !-----------------------------------------------------------------------
 module mpas_atm_consistent_operators
@@ -66,6 +66,10 @@ module mpas_atm_consistent_operators
    ! Largest number of sweeps of the Jacobi eigenvalue iteration (it converges in a few)
    integer, parameter :: max_jacobi_sweeps = 50
 
+   ! Largest | |x| / sphere_radius - 1 | of a cell or vertex position x: 1e-10, or four roundoffs of the
+   ! working precision where that is larger (single precision)
+   real (kind=R8KIND), parameter :: unit_norm_tolerance = max(1.0e-10_R8KIND, 4.0_R8KIND * epsilon(1.0_RKIND))
+
 
    contains
 
@@ -78,7 +82,10 @@ module mpas_atm_consistent_operators
    !> \date   17 November 2026
    !> \details
    !>  Called once per block at start-up, after mpas_init_reconstruct and before
-   !>  the first diagnostics. Does nothing with the default options.
+   !>  the first diagnostics. Does nothing with the default options. Computes the
+   !>  geometry shared by the options, then the weights of each option in
+   !>  init_cell_weights, init_vertex_weights, init_tangential_weights and
+   !>  init_midpoint_weights.
    !
    !-----------------------------------------------------------------------
    subroutine atm_consistent_operators_init(mesh, configs)
@@ -93,24 +100,18 @@ module mpas_atm_consistent_operators
       logical, pointer :: config_edge_midpoint_flux
       logical, pointer :: on_a_sphere
       real (kind=RKIND), pointer :: sphere_radius
-      integer, pointer :: nCells, nEdges, nVertices, nCellsSolve, nEdgesSolve, nVerticesSolve, vertexDegree, maxEdges
-      integer, dimension(:), pointer :: nEdgesOnCell, nEdgesOnEdge
-      integer, dimension(:,:), pointer :: edgesOnCell, verticesOnCell, verticesOnEdge, cellsOnEdge, &
-                                          edgesOnVertex, cellsOnVertex, edgesOnEdge
+      integer, pointer :: nCells, nEdges, nVertices, maxEdges
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: edgesOnCell, verticesOnCell, verticesOnEdge, cellsOnEdge
       real (kind=RKIND), dimension(:), pointer :: xCell, yCell, zCell, xVertex, yVertex, zVertex
-      real (kind=RKIND), dimension(:,:), pointer :: edgesOnCell_sign, weightsOnEdge, weightsOnEdge_perot
-      real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own, coeffs_edge_midpoint_own
-      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint
-      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
+      real (kind=RKIND), dimension(:,:), pointer :: edgesOnCell_sign
 
       real (kind=R8KIND), dimension(:,:), allocatable :: xc, xv, xt, ne
       real (kind=R8KIND), dimension(:,:,:), allocatable :: wperot
-      logical, dimension(:), allocatable :: cell_ok, vertex_ok, edge_ok, perot_ok
-      real (kind=R8KIND), dimension(:,:), allocatable :: wc, wv
-      real (kind=R8KIND), dimension(:), allocatable :: we
-      real (kind=R8KIND) :: r, wown
+      logical, dimension(:), allocatable :: edge_ok, perot_ok
+      real (kind=R8KIND) :: r
       logical :: ke_perot, ke_lsq2, cell_perot, cell_lsq2, tangential_perot
-      integer :: iCell, iEdge, iVertex, n, c1, c2
+      integer :: iCell, iEdge, iVertex, n
 
       call mpas_pool_get_config(configs, 'config_ke_reconstruction', config_ke_reconstruction)
       call mpas_pool_get_config(configs, 'config_cell_wind_reconstruction', config_cell_wind_reconstruction)
@@ -136,10 +137,6 @@ module mpas_atm_consistent_operators
       call mpas_pool_get_dimension(mesh, 'nCells', nCells)
       call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
       call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
-      call mpas_pool_get_dimension(mesh, 'nCellsSolve', nCellsSolve)
-      call mpas_pool_get_dimension(mesh, 'nEdgesSolve', nEdgesSolve)
-      call mpas_pool_get_dimension(mesh, 'nVerticesSolve', nVerticesSolve)
-      call mpas_pool_get_dimension(mesh, 'vertexDegree', vertexDegree)
       call mpas_pool_get_dimension(mesh, 'maxEdges', maxEdges)
 
       call mpas_pool_get_array(mesh, 'xCell', xCell)
@@ -153,11 +150,7 @@ module mpas_atm_consistent_operators
       call mpas_pool_get_array(mesh, 'verticesOnCell', verticesOnCell)
       call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
-      call mpas_pool_get_array(mesh, 'edgesOnVertex', edgesOnVertex)
-      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
       call mpas_pool_get_array(mesh, 'edgesOnCell_sign', edgesOnCell_sign)
-      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
-      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
 
       ! positions on the unit sphere
       r = 1.0_R8KIND / real(sphere_radius, R8KIND)
@@ -168,6 +161,8 @@ module mpas_atm_consistent_operators
       do iVertex = 1, nVertices
          xv(:,iVertex) = (/ real(xVertex(iVertex), R8KIND), real(yVertex(iVertex), R8KIND), real(zVertex(iVertex), R8KIND) /) * r
       end do
+      call check_unit_norm('xCell, yCell, zCell', xc, sphere_radius)
+      call check_unit_norm('xVertex, yVertex, zVertex', xv, sphere_radius)
 
       ! edges whose two cells are in the block: point x_t (midpoint of the arc between the cells) and unit normal
       allocate(xt(3,nEdges), ne(3,nEdges), edge_ok(nEdges))
@@ -196,117 +191,10 @@ module mpas_atm_consistent_operators
          end do
       end if
 
-      if (cell_perot .or. cell_lsq2) then
-         call mpas_pool_get_array(mesh, 'coeffs_reconstruct', coeffs_reconstruct)
-
-         allocate(cell_ok(nCells), wc(3,maxEdges))
-         do iCell = 1, nCells
-            cell_ok(iCell) = perot_ok(iCell)
-            if (cell_ok(iCell) .and. cell_lsq2) cell_ok(iCell) = all(edge_ok(edgesOnCell(1:nEdgesOnCell(iCell),iCell)))
-         end do
-
-         do iCell = 1, nCells
-            if (.not. cell_ok(iCell)) cycle
-            n = nEdgesOnCell(iCell)
-            if (cell_perot) then
-               wc(:,1:n) = wperot(:,1:n,iCell)
-            else
-               call lsq2_vector_weights(xc(:,iCell), n, edgesOnCell(:,iCell), xt, ne, wc)
-            end if
-            coeffs_reconstruct(:,:,iCell) = 0.0_RKIND
-            coeffs_reconstruct(:,1:n,iCell) = real(wc(:,1:n), RKIND)
-         end do
-
-         if (.not. (ke_perot .or. ke_lsq2)) then
-            call mpas_log_write('Cell velocity from the '//trim(config_cell_wind_reconstruction)// &
-                                ' reconstruction; owned cells without it: $i', intArgs=(/count(.not. cell_ok(1:nCellsSolve))/))
-         end if
-      end if
-
-      if (ke_perot .or. ke_lsq2) then
-         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
-
-         allocate(vertex_ok(nVertices), wv(3,vertexDegree))
-         do iVertex = 1, nVertices
-            vertex_ok(iVertex) = all(edgesOnVertex(:,iVertex) >= 1 .and. edgesOnVertex(:,iVertex) <= nEdges) .and. &
-                                 all(cellsOnVertex(:,iVertex) >= 1 .and. cellsOnVertex(:,iVertex) <= nCells)
-            if (vertex_ok(iVertex)) vertex_ok(iVertex) = all(edge_ok(edgesOnVertex(:,iVertex)))
-         end do
-
-         do iVertex = 1, nVertices
-            coeffs_reconstruct_vertex(:,:,iVertex) = 0.0_RKIND
-            if (.not. vertex_ok(iVertex)) cycle
-            if (ke_perot) then
-               call perot_vertex_weights(xv(:,iVertex), vertexDegree, edgesOnVertex(:,iVertex), cellsOnVertex(:,iVertex), &
-                                         cellsOnEdge, xc, ne, wv)
-            else
-               call lsq2_vector_weights(xv(:,iVertex), vertexDegree, edgesOnVertex(:,iVertex), xt, ne, wv)
-            end if
-            coeffs_reconstruct_vertex(:,:,iVertex) = real(wv, RKIND)
-         end do
-
-         call mpas_log_write('Kinetic energy and cell velocity from the '//trim(config_ke_reconstruction)// &
-                             ' reconstruction; owned cells and vertices without it: $i $i', &
-                             intArgs=(/count(.not. cell_ok(1:nCellsSolve)), count(.not. vertex_ok(1:nVerticesSolve))/))
-         deallocate(vertex_ok, wv)
-      end if
-      if (cell_perot .or. cell_lsq2) then
-         deallocate(cell_ok, wc)
-      end if
-
-      if (tangential_perot) then
-         call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
-         call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
-         call mpas_pool_get_array(mesh, 'weightOnEdge_perot_own', weightOnEdge_perot_own)
-
-         allocate(we(size(weightsOnEdge_perot,1)))
-         n = 0
-         do iEdge = 1, nEdges
-            if (edge_ok(iEdge)) then
-               c1 = cellsOnEdge(1,iEdge)
-               c2 = cellsOnEdge(2,iEdge)
-               if (perot_ok(c1) .and. perot_ok(c2)) then
-                  call perot_tangential_weights(iEdge, nEdgesOnEdge(iEdge), edgesOnEdge(:,iEdge), cellsOnEdge(:,iEdge), &
-                                                verticesOnEdge(:,iEdge), xc, xv, ne(:,iEdge), nEdgesOnCell, edgesOnCell, &
-                                                wperot, we, wown)
-                  weightsOnEdge_perot(:,iEdge) = real(we, RKIND)
-                  weightOnEdge_perot_own(iEdge) = real(wown, RKIND)
-                  cycle
-               end if
-            end if
-            weightsOnEdge_perot(:,iEdge) = weightsOnEdge(:,iEdge)
-            weightOnEdge_perot_own(iEdge) = 0.0_RKIND
-            if (iEdge <= nEdgesSolve) n = n + 1
-         end do
-
-         call mpas_log_write('Tangential velocity from the Perot velocities of the cells; owned edges without it: $i', &
-                             intArgs=(/n/))
-         deallocate(we)
-      end if
-
-      if (config_edge_midpoint_flux) then
-         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint', coeffs_edge_midpoint)
-         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_own', coeffs_edge_midpoint_own)
-
-         allocate(we(size(coeffs_edge_midpoint,1)))
-         n = 0
-         do iEdge = 1, nEdges
-            if (midpoint_stencil_ok(iEdge, nEdgesOnEdge(iEdge), edgesOnEdge(:,iEdge), verticesOnEdge(:,iEdge), &
-                                    nEdges, nVertices, edge_ok)) then
-               call edge_midpoint_weights(iEdge, nEdgesOnEdge(iEdge), edgesOnEdge(:,iEdge), cellsOnEdge(:,iEdge), &
-                                          verticesOnEdge(:,iEdge), xc, xv, xt, ne, we, wown)
-               coeffs_edge_midpoint(:,iEdge) = real(we, RKIND)
-               coeffs_edge_midpoint_own(iEdge) = real(wown, RKIND)
-            else
-               coeffs_edge_midpoint(:,iEdge) = 0.0_RKIND
-               coeffs_edge_midpoint_own(iEdge) = 1.0_RKIND
-               if (iEdge <= nEdgesSolve) n = n + 1
-            end if
-         end do
-
-         call mpas_log_write('Edge fluxes at the Voronoi edge midpoints; owned edges without the weights: $i', intArgs=(/n/))
-         deallocate(we)
-      end if
+      if (cell_perot .or. cell_lsq2) call init_cell_weights(mesh, cell_perot, xc, xt, ne, edge_ok, perot_ok, wperot)
+      if (ke_perot .or. ke_lsq2) call init_vertex_weights(mesh, ke_perot, xc, xv, xt, ne, edge_ok)
+      if (tangential_perot) call init_tangential_weights(mesh, xc, xv, ne, edge_ok, perot_ok, wperot)
+      if (config_edge_midpoint_flux) call init_midpoint_weights(mesh, xc, xv, xt, ne, edge_ok)
 
       if (allocated(wperot)) deallocate(wperot)
       deallocate(xc, xv, xt, ne, edge_ok, perot_ok)
@@ -314,6 +202,278 @@ module mpas_atm_consistent_operators
       call mpas_timer_stop('atm_consistent_operators_init')
 
    end subroutine atm_consistent_operators_init
+
+
+   !-----------------------------------------------------------------------
+   !  routine init_cell_weights
+   !
+   !> \brief Cell velocity from the Perot or lsq2 weights
+   !> \author Pedro Peixoto
+   !> \date   17 November 2026
+   !> \details
+   !>  Replaces coeffs_reconstruct on the cells whose stencil is in the block,
+   !>  where wperot holds the Perot weights if perot; the other cells keep the
+   !>  coefficients of mpas_init_reconstruct.
+   !
+   !-----------------------------------------------------------------------
+   subroutine init_cell_weights(mesh, perot, xc, xt, ne, edge_ok, perot_ok, wperot)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      logical, intent(in) :: perot
+      real (kind=R8KIND), dimension(:,:), intent(in) :: xc, xt, ne
+      logical, dimension(:), intent(in) :: edge_ok, perot_ok
+      real (kind=R8KIND), dimension(:,:,:), allocatable, intent(in) :: wperot
+
+      integer, pointer :: nCells, nCellsSolve, maxEdges
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: edgesOnCell
+      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct
+
+      real (kind=R8KIND), dimension(:,:), allocatable :: wc
+      character (len=5) :: method
+      logical :: cell_ok
+      integer :: iCell, n, nFallback
+
+      call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+      call mpas_pool_get_dimension(mesh, 'nCellsSolve', nCellsSolve)
+      call mpas_pool_get_dimension(mesh, 'maxEdges', maxEdges)
+      call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
+      call mpas_pool_get_array(mesh, 'coeffs_reconstruct', coeffs_reconstruct)
+
+      allocate(wc(3,maxEdges))
+      nFallback = 0
+      do iCell = 1, nCells
+         n = nEdgesOnCell(iCell)
+         cell_ok = perot_ok(iCell)
+         if (cell_ok .and. .not. perot) cell_ok = all(edge_ok(edgesOnCell(1:n,iCell)))
+         if (.not. cell_ok) then
+            if (iCell <= nCellsSolve) nFallback = nFallback + 1
+            cycle
+         end if
+         if (perot) then
+            wc(:,1:n) = wperot(:,1:n,iCell)
+         else
+            call lsq2_vector_weights(xc(:,iCell), n, edgesOnCell(:,iCell), xt, ne, wc)
+         end if
+         coeffs_reconstruct(:,:,iCell) = 0.0_RKIND
+         coeffs_reconstruct(:,1:n,iCell) = real(wc(:,1:n), RKIND)
+      end do
+      deallocate(wc)
+
+      method = 'lsq2'
+      if (perot) method = 'perot'
+      call mpas_log_write('Cell velocity from the '//trim(method)//' reconstruction; owned cells without it: $i', &
+                          intArgs=(/nFallback/))
+
+   end subroutine init_cell_weights
+
+
+   !-----------------------------------------------------------------------
+   !  routine init_vertex_weights
+   !
+   !> \brief Vertex velocity of the kinetic energy from the Perot or lsq2 weights
+   !> \author Pedro Peixoto
+   !> \date   17 November 2026
+   !> \details
+   !>  coeffs_reconstruct_vertex on the vertices whose stencil is in the block,
+   !>  zero weights on the others.
+   !
+   !-----------------------------------------------------------------------
+   subroutine init_vertex_weights(mesh, perot, xc, xv, xt, ne, edge_ok)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      logical, intent(in) :: perot
+      real (kind=R8KIND), dimension(:,:), intent(in) :: xc, xv, xt, ne
+      logical, dimension(:), intent(in) :: edge_ok
+
+      integer, pointer :: nCells, nEdges, nVertices, nVerticesSolve, vertexDegree
+      integer, dimension(:,:), pointer :: edgesOnVertex, cellsOnVertex, cellsOnEdge
+      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct_vertex
+
+      real (kind=R8KIND), dimension(:,:), allocatable :: wv
+      character (len=5) :: method
+      logical :: vertex_ok
+      integer :: iVertex, nFallback
+
+      call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
+      call mpas_pool_get_dimension(mesh, 'nVerticesSolve', nVerticesSolve)
+      call mpas_pool_get_dimension(mesh, 'vertexDegree', vertexDegree)
+      call mpas_pool_get_array(mesh, 'edgesOnVertex', edgesOnVertex)
+      call mpas_pool_get_array(mesh, 'cellsOnVertex', cellsOnVertex)
+      call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+
+      allocate(wv(3,vertexDegree))
+      nFallback = 0
+      do iVertex = 1, nVertices
+         coeffs_reconstruct_vertex(:,:,iVertex) = 0.0_RKIND
+         vertex_ok = all(edgesOnVertex(:,iVertex) >= 1 .and. edgesOnVertex(:,iVertex) <= nEdges) .and. &
+                     all(cellsOnVertex(:,iVertex) >= 1 .and. cellsOnVertex(:,iVertex) <= nCells)
+         if (vertex_ok) vertex_ok = all(edge_ok(edgesOnVertex(:,iVertex)))
+         if (.not. vertex_ok) then
+            if (iVertex <= nVerticesSolve) nFallback = nFallback + 1
+            cycle
+         end if
+         if (perot) then
+            call perot_vertex_weights(xv(:,iVertex), vertexDegree, edgesOnVertex(:,iVertex), cellsOnVertex(:,iVertex), &
+                                      cellsOnEdge, xc, ne, wv)
+         else
+            call lsq2_vector_weights(xv(:,iVertex), vertexDegree, edgesOnVertex(:,iVertex), xt, ne, wv)
+         end if
+         coeffs_reconstruct_vertex(:,:,iVertex) = real(wv, RKIND)
+      end do
+      deallocate(wv)
+
+      method = 'lsq2'
+      if (perot) method = 'perot'
+      call mpas_log_write('Kinetic energy and cell velocity from the '//trim(method)//' reconstruction;'// &
+                          ' owned vertices without it: $i', intArgs=(/nFallback/))
+
+   end subroutine init_vertex_weights
+
+
+   !-----------------------------------------------------------------------
+   !  routine init_tangential_weights
+   !
+   !> \brief Tangential velocity of the edges from the Perot velocities of their cells
+   !> \author Pedro Peixoto
+   !> \date   17 November 2026
+   !> \details
+   !>  On the edges whose two cells have Perot weights in wperot, the stencil
+   !>  nEdgesOnEdge_perot, edgesOnEdge_perot is the edgesOnEdge of the edge, then
+   !>  the edge itself, with the weights weightsOnEdge_perot; the other edges get
+   !>  the stencil and weights of MPAS.
+   !
+   !-----------------------------------------------------------------------
+   subroutine init_tangential_weights(mesh, xc, xv, ne, edge_ok, perot_ok, wperot)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      real (kind=R8KIND), dimension(:,:), intent(in) :: xc, xv, ne
+      logical, dimension(:), intent(in) :: edge_ok, perot_ok
+      real (kind=R8KIND), dimension(:,:,:), intent(in) :: wperot
+
+      integer, pointer :: nEdges, nEdgesSolve
+      integer, dimension(:), pointer :: nEdgesOnCell, nEdgesOnEdge, nEdgesOnEdge_perot
+      integer, dimension(:,:), pointer :: edgesOnCell, edgesOnEdge, edgesOnEdge_perot, cellsOnEdge, verticesOnEdge
+      real (kind=RKIND), dimension(:,:), pointer :: weightsOnEdge, weightsOnEdge_perot
+
+      real (kind=R8KIND), dimension(:), allocatable :: we
+      integer :: iEdge, c1, c2, n, nFallback
+
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(mesh, 'nEdgesSolve', nEdgesSolve)
+      call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
+      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
+      call mpas_pool_get_array(mesh, 'nEdgesOnEdge_perot', nEdgesOnEdge_perot)
+      call mpas_pool_get_array(mesh, 'edgesOnEdge_perot', edgesOnEdge_perot)
+      call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
+
+      ! leading dimension maxEdges2P1 of the stencil arrays: slot n+1 is free for the edge itself
+      allocate(we(size(weightsOnEdge_perot,1)))
+      nFallback = 0
+      do iEdge = 1, nEdges
+         n = nEdgesOnEdge(iEdge)
+         edgesOnEdge_perot(:,iEdge) = 0
+         edgesOnEdge_perot(1:n,iEdge) = edgesOnEdge(1:n,iEdge)
+         if (edge_ok(iEdge)) then
+            c1 = cellsOnEdge(1,iEdge)
+            c2 = cellsOnEdge(2,iEdge)
+            if (perot_ok(c1) .and. perot_ok(c2)) then
+               call perot_tangential_weights(iEdge, n, edgesOnEdge(:,iEdge), cellsOnEdge(:,iEdge), verticesOnEdge(:,iEdge), &
+                                             xc, xv, ne(:,iEdge), nEdgesOnCell, edgesOnCell, wperot, we)
+               nEdgesOnEdge_perot(iEdge) = n + 1
+               edgesOnEdge_perot(n+1,iEdge) = iEdge
+               weightsOnEdge_perot(:,iEdge) = real(we, RKIND)
+               cycle
+            end if
+         end if
+         nEdgesOnEdge_perot(iEdge) = n
+         weightsOnEdge_perot(:,iEdge) = 0.0_RKIND
+         weightsOnEdge_perot(1:n,iEdge) = weightsOnEdge(1:n,iEdge)
+         if (iEdge <= nEdgesSolve) nFallback = nFallback + 1
+      end do
+      deallocate(we)
+
+      call mpas_log_write('Tangential velocity from the Perot velocities of the cells; owned edges without it: $i', &
+                          intArgs=(/nFallback/))
+
+   end subroutine init_tangential_weights
+
+
+   !-----------------------------------------------------------------------
+   !  routine init_midpoint_weights
+   !
+   !> \brief Weights of the flux at the Voronoi edge midpoint
+   !> \author Pedro Peixoto
+   !> \date   17 November 2026
+   !> \details
+   !>  coeffs_edge_midpoint and coeffs_edge_midpoint_own on the edges whose stencil
+   !>  is in the block; on the others the midpoint flux is the flux at x_t.
+   !
+   !-----------------------------------------------------------------------
+   subroutine init_midpoint_weights(mesh, xc, xv, xt, ne, edge_ok)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      real (kind=R8KIND), dimension(:,:), intent(in) :: xc, xv, xt, ne
+      logical, dimension(:), intent(in) :: edge_ok
+
+      integer, pointer :: nEdges, nVertices, nEdgesSolve
+      integer, dimension(:), pointer :: nEdgesOnEdge
+      integer, dimension(:,:), pointer :: edgesOnEdge, cellsOnEdge, verticesOnEdge
+      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint
+      real (kind=RKIND), dimension(:), pointer :: coeffs_edge_midpoint_own
+
+      real (kind=R8KIND), dimension(:), allocatable :: we
+      real (kind=R8KIND) :: wown
+      integer :: iEdge, nFallback
+
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
+      call mpas_pool_get_dimension(mesh, 'nEdgesSolve', nEdgesSolve)
+      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint', coeffs_edge_midpoint)
+      call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_own', coeffs_edge_midpoint_own)
+
+      allocate(we(size(coeffs_edge_midpoint,1)))
+      nFallback = 0
+      do iEdge = 1, nEdges
+         if (midpoint_stencil_ok(iEdge, nEdgesOnEdge(iEdge), edgesOnEdge(:,iEdge), verticesOnEdge(:,iEdge), &
+                                 nEdges, nVertices, edge_ok)) then
+            call edge_midpoint_weights(iEdge, nEdgesOnEdge(iEdge), edgesOnEdge(:,iEdge), cellsOnEdge(:,iEdge), &
+                                       verticesOnEdge(:,iEdge), xc, xv, xt, ne, we, wown)
+            coeffs_edge_midpoint(:,iEdge) = real(we, RKIND)
+            coeffs_edge_midpoint_own(iEdge) = real(wown, RKIND)
+         else
+            coeffs_edge_midpoint(:,iEdge) = 0.0_RKIND
+            coeffs_edge_midpoint_own(iEdge) = 1.0_RKIND
+            if (iEdge <= nEdgesSolve) nFallback = nFallback + 1
+         end if
+      end do
+      deallocate(we)
+
+      call mpas_log_write('Edge fluxes at the Voronoi edge midpoints; owned edges without the weights: $i', &
+                          intArgs=(/nFallback/))
+
+   end subroutine init_midpoint_weights
 
 
    !-----------------------------------------------------------------------
@@ -768,10 +928,10 @@ module mpas_atm_consistent_operators
    !>  v = (1/2) sum over the two cells c of v_c . t_c, with v_c the Perot velocity
    !>  of cell c and t_c the edge projected onto the plane tangent at c, oriented as
    !>  k x n. Weights w(1:n) go with eoe(1:n), the edgesOnEdge of the edge, and
-   !>  wown with the edge itself.
+   !>  w(n+1) with the edge itself.
    !
    !-----------------------------------------------------------------------
-   subroutine perot_tangential_weights(iEdge, n, eoe, cells, vertices, xc, xv, ne, nEdgesOnCell, edgesOnCell, wperot, w, wown)
+   subroutine perot_tangential_weights(iEdge, n, eoe, cells, vertices, xc, xv, ne, nEdgesOnCell, edgesOnCell, wperot, w)
 
       implicit none
 
@@ -782,13 +942,11 @@ module mpas_atm_consistent_operators
       real (kind=R8KIND), dimension(3), intent(in) :: ne
       real (kind=R8KIND), dimension(:,:,:), intent(in) :: wperot
       real (kind=R8KIND), dimension(:), intent(out) :: w
-      real (kind=R8KIND), intent(out) :: wown
 
       real (kind=R8KIND), dimension(3) :: b, t
       integer :: side, c, i, j
 
       w = 0.0_R8KIND
-      wown = 0.0_R8KIND
       do side = 1, 2
          c = cells(side)
          b = xc(:,c)
@@ -796,7 +954,7 @@ module mpas_atm_consistent_operators
          if (dot_product(t, cross(b, ne)) < 0.0_R8KIND) t = -t
          do i = 1, nEdgesOnCell(c)
             if (edgesOnCell(i,c) == iEdge) then
-               wown = wown + 0.5_R8KIND * dot_product(wperot(:,i,c), t)
+               w(n+1) = w(n+1) + 0.5_R8KIND * dot_product(wperot(:,i,c), t)
                cycle
             end if
             j = findloc(eoe(1:n), edgesOnCell(i,c), dim=1)
@@ -809,6 +967,30 @@ module mpas_atm_consistent_operators
       end do
 
    end subroutine perot_tangential_weights
+
+
+   ! stops if a position x(:,i) divided by sphere_radius is not on the unit sphere, as the projections assume
+   subroutine check_unit_norm(fields, x, sphere_radius)
+
+      implicit none
+
+      character (len=*), intent(in) :: fields
+      real (kind=R8KIND), dimension(:,:), intent(in) :: x
+      real (kind=RKIND), intent(in) :: sphere_radius
+
+      real (kind=R8KIND) :: d
+      integer :: i
+
+      do i = 1, size(x,2)
+         d = norm2(x(:,i)) - 1.0_R8KIND
+         if (abs(d) > unit_norm_tolerance) then
+            call mpas_log_write(fields//' of index $i not on the sphere of the mesh attribute sphere_radius = $r:'// &
+                                ' |x| / sphere_radius - 1 = $r', intArgs=(/i/), realArgs=(/sphere_radius, real(d, RKIND)/), &
+                                messageType=MPAS_LOG_CRIT)
+         end if
+      end do
+
+   end subroutine check_unit_norm
 
 
    ! whether the stencil of the midpoint flux of an edge (the edge and its edgesOnEdge) is in the block
@@ -865,7 +1047,7 @@ module mpas_atm_consistent_operators
       e2 = unit(cross(b, e1))
       L = atan2(norm2(cross(xc(:,cells(1)), xc(:,cells(2)))), dot_product(xc(:,cells(1)), xc(:,cells(2))))
 
-      call lsq2_fit(b, n+1, xt(:,stencil), ne(:,stencil), e1, e2, L, P)
+      call lsq2_fit(b, n+1, xt(:,stencil), ne(:,stencil), e1, e2, P, scale=L)
 
       dx = project(unit(xv(:,vertices(1)) + xv(:,vertices(2))), b) - b
       g = (P(fit_dadx1,:) * dot_product(dx, e1) + P(fit_dadx2,:) * dot_product(dx, e2)) / L
@@ -908,7 +1090,7 @@ module mpas_atm_consistent_operators
       east = (/ -sin(lon), cos(lon), 0.0_R8KIND /)
       north = cross(b, east)
 
-      call lsq2_fit(b, n, xt(:,edges(1:n)), ne(:,edges(1:n)), east, north, 0.0_R8KIND, P)
+      call lsq2_fit(b, n, xt(:,edges(1:n)), ne(:,edges(1:n)), east, north, P)
 
       do i = 1, n
          w(:,i) = P(fit_a,i) * east + P(fit_b,i) * north
@@ -926,20 +1108,20 @@ module mpas_atm_consistent_operators
    !> \details
    !>  Rows of P (nfit x n) give the unknowns fit_* of the field from the normal
    !>  components at the points pos(:,1:n) with normals nrm(:,1:n), all projected
-   !>  onto the plane tangent at b. Offsets are in units of scale, or of their mean
-   !>  length if scale is zero. Poorly conditioned fits get their gradient terms
+   !>  onto the plane tangent at b. Offsets are in units of scale if present, else
+   !>  of their mean length. Poorly conditioned fits get their gradient terms
    !>  regularized (lsq_max_condition).
    !
    !-----------------------------------------------------------------------
-   subroutine lsq2_fit(b, n, pos, nrm, e1, e2, scale, P)
+   subroutine lsq2_fit(b, n, pos, nrm, e1, e2, P, scale)
 
       implicit none
 
       real (kind=R8KIND), dimension(3), intent(in) :: b, e1, e2
       integer, intent(in) :: n
       real (kind=R8KIND), dimension(3,n), intent(in) :: pos, nrm
-      real (kind=R8KIND), intent(in) :: scale
       real (kind=R8KIND), dimension(nfit,n), intent(out) :: P
+      real (kind=R8KIND), intent(in), optional :: scale
 
       real (kind=R8KIND), dimension(n,nfit) :: M
       real (kind=R8KIND), dimension(nfit,nfit) :: A
@@ -952,7 +1134,7 @@ module mpas_atm_consistent_operators
       do i = 1, n
          pp(:,i) = project(pos(:,i), b)
       end do
-      if (scale > 0.0_R8KIND) then
+      if (present(scale)) then
          L = scale
       else
          L = 0.0_R8KIND
