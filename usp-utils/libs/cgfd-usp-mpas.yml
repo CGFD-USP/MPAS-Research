@@ -1,0 +1,22 @@
+name: cgfd-usp-mpas
+channels:
+  - conda-forge
+dependencies:
+  - cartopy
+  - cfgrib
+  - eccodes
+  - f90nml
+  - jigsaw
+  - matplotlib
+  - mpas_tools
+  - numpy
+  - pandas
+  - pip
+  - scipy
+  - setuptools
+  - tqdm
+  - xarray
+  - pip:
+    - cdsapi
+    - git+https://github.com/dengwirda/jigsaw-python.git
+    - pywinter
