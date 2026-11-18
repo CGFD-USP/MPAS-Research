@@ -29,6 +29,8 @@ def scheme_logged(log, options):
     marks = {
         "config_tangential_reconstruction = 'perot'": "Tangential velocity from the Perot velocities",
         "config_edge_midpoint_flux = true": "Edge fluxes at the Voronoi edge midpoints",
+        "config_cell_wind_reconstruction = 'perot'": "Cell velocity from the perot reconstruction",
+        "config_cell_wind_reconstruction = 'lsq2'": "Cell velocity from the lsq2 reconstruction",
     }
     ke = re.search(r"config_ke_reconstruction = '(\w+)'", options)
     if ke and ke.group(1) != "trsk":

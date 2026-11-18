@@ -100,6 +100,7 @@ or `-newke`.
 | `trsk-cellke-consistent` | T(MPAS), cell KE (Perot) | `trsk` | `perot` | 1.0 |
 | `trsk-cellke-lsq2` | T(MPAS), cell KE (LSq2) | `trsk` | `lsq2` | 1.0 |
 | `consistent-trskke` | T(Cons), KE(MPAS) | `perot` | `trsk` | default |
+| `trsk-cellvel` | MPAS with the Perot cell wind (`config_cell_wind_reconstruction = 'perot'`) | `trsk` | `trsk` | default |
 
 ## Choices
 

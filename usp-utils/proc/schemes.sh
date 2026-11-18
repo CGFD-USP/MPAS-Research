@@ -11,10 +11,12 @@
 #   consistent, lsq2        as the two above, cell kinetic energy alone (config_ke_cell_weight = 1)
 #   trsk-cellke-consistent, trsk-cellke-lsq2    as trsk-newke-*, cell kinetic energy alone
 #   consistent-trskke       T(Cons)-KE(MPAS)  perot       trsk            default
+#   trsk-cellvel            MPAS with the Perot cell wind (config_cell_wind_reconstruction = 'perot'), physics and output
 scheme_options() {
-  local tangential ke blend
+  local tangential ke blend cell=
   case ${1%+em} in
     trsk) tangential=trsk ke=trsk blend=blend ;;
+    trsk-cellvel) tangential=trsk ke=trsk blend=blend cell=perot ;;
     trsk-newke-consistent) tangential=trsk ke=perot blend=blend ;;
     trsk-newke-lsq2) tangential=trsk ke=lsq2 blend=blend ;;
     trsk-cellke-consistent) tangential=trsk ke=perot blend=cell ;;
@@ -29,6 +31,7 @@ scheme_options() {
   echo "config_tangential_reconstruction = '$tangential'"
   echo "config_ke_reconstruction = '$ke'"
   [ "$blend" != cell ] || echo "config_ke_cell_weight = 1.0"
+  [ -z "$cell" ] || echo "config_cell_wind_reconstruction = '$cell'"
   [ "$1" = "${1%+em}" ] || echo "config_edge_midpoint_flux = true"
   return 0
 }

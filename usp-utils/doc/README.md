@@ -28,6 +28,7 @@ off, and with all of them at their defaults the model is bitwise identical to MP
 |---|---|---|
 | `config_tangential_reconstruction` | `'trsk'` | tangential wind of an edge in the Coriolis term and in the diagnosed `v`: from `weightsOnEdge` (`'trsk'`), or as the mean of the Perot velocities of its two cells along the edge, with the weight of the edge itself (`'perot'`) |
 | `config_ke_reconstruction` | `'trsk'` | kinetic energy at cells and vertices from the squares of the edge winds (`'trsk'`), or from the wind vector reconstructed with the Perot weights (`'perot'`) or a second-order least-squares fit (`'lsq2'`). With `'perot'` and `'lsq2'` the same reconstruction gives the cell wind `uReconstruct*` |
+| `config_cell_wind_reconstruction` | `'ke'` | cell wind `uReconstruct*` of the physics and the output: from the reconstruction of `config_ke_reconstruction` (`'ke'`, the radial basis functions of MPAS with `'trsk'`), or from the Perot weights (`'perot'`) or the least-squares fit (`'lsq2'`). A value other than `'ke'` needs `config_ke_reconstruction = 'trsk'` or the same value, so with `'trsk'` it changes only the cell wind |
 | `config_ke_cell_weight` | `0.625` | weight of the cell estimate in the blend with the vertex estimates, which get one minus this weight |
 | `config_edge_midpoint_flux` | `.false.` | fluxes of mass, `theta_m` and `w` in the large-step divergences, and the mass flux of the scalar transport, at the midpoint of the Voronoi edge instead of the edge point |
 | `config_acoustic_pgf_zz` | `.false.` | `zz` factor in the horizontal pressure gradient of the acoustic steps |
@@ -52,7 +53,9 @@ A scheme is named by its choice for the tangential wind T, the kinetic energy KE
 
 The paper's runs also set `config_acoustic_pgf_zz = .true.` and, in the idealized tests, `config_point_wind = .true.`. The
 harness maps a name to its options in one place, [`proc/schemes.sh`](../proc/schemes.sh). Names without `-vke` or `-newke`
-(`consistent`, `lsq2`) use the cell kinetic energy alone, `config_ke_cell_weight = 1.0`.
+(`consistent`, `lsq2`) use the cell kinetic energy alone, `config_ke_cell_weight = 1.0`. The control `trsk-cellvel` is MPAS
+with the Perot cell wind, `config_cell_wind_reconstruction = 'perot'`, which isolates the effect of the cell wind on the
+physics in the real cases.
 
 ## Idealized tests
 
