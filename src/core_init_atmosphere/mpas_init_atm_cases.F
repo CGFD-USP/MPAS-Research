@@ -99,12 +99,13 @@ module init_atm_cases
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_init_case', config_init_case)
 
-      if ((config_init_case == 1) .or. (config_init_case == 2) .or. (config_init_case == 3)) then
+      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 21 .and. config_init_case <= 23)) then
 
          call mpas_log_write(' Jablonowski and Williamson baroclinic wave test case ')
-         if (config_init_case == 1) call mpas_log_write(' no initial perturbation ')
-         if (config_init_case == 2) call mpas_log_write(' initial perturbation included ')
-         if (config_init_case == 3) call mpas_log_write(' normal-mode perturbation included ')
+         if (config_init_case == 1 .or. config_init_case == 21) call mpas_log_write(' no initial perturbation ')
+         if (config_init_case == 2 .or. config_init_case == 22) call mpas_log_write(' initial perturbation included ')
+         if (config_init_case == 3 .or. config_init_case == 23) call mpas_log_write(' normal-mode perturbation included ')
+         if (config_init_case >= 21) call mpas_log_write(' point value at xEdge of the wind balanced against the pressure gradient of the model ')
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
 
@@ -119,7 +120,8 @@ module init_atm_cases
             call mpas_pool_get_dimension(block_ptr % dimensions, 'nVertLevels', nVertLevels)
 
             call mpas_log_write(' calling test case setup ')
-            call init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, block_ptr % configs)
+            call init_atm_case_jw(domain % dminfo, mesh, nCells, nVertLevels, state, diag, block_ptr % configs, &
+                                config_init_case >= 21)
             call decouple_variables(mesh, nCells, nVertLevels, state, diag)
             call mpas_log_write(' returned from test case setup ')
             block_ptr => block_ptr % next
@@ -389,6 +391,24 @@ module init_atm_cases
             block_ptr => block_ptr % next
          end do
 
+      else if (config_init_case == 11) then
+
+         call mpas_log_write(' isothermal solid-body zonal flow, steady state ')
+         block_ptr => domain % blocklist
+         do while (associated(block_ptr))
+
+            call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
+            call mpas_pool_get_subpool(block_ptr % structs, 'state', state)
+            call mpas_pool_get_subpool(block_ptr % structs, 'diag', diag)
+
+            call mpas_pool_get_dimension(block_ptr % dimensions, 'nCells', nCells)
+            call mpas_pool_get_dimension(block_ptr % dimensions, 'nVertLevels', nVertLevels)
+
+            call init_atm_case_zonal_steady(mesh, nCells, nVertLevels, state, diag, block_ptr % configs)
+            call decouple_variables(mesh, nCells, nVertLevels, state, diag)
+            block_ptr => block_ptr % next
+         end do
+
       else if (config_init_case == 13 ) then
 
          call mpas_log_write(' CAM-MPAS grid ')
@@ -421,7 +441,7 @@ module init_atm_cases
       else
 
          call mpas_log_write(' ***********************************************************', messageType=MPAS_LOG_ERR)
-         call mpas_log_write(' Only test cases 1 through 10 and 13 are currently supported.', messageType=MPAS_LOG_ERR)
+         call mpas_log_write(' Only test cases 1 through 11, 13 and 21 through 23 are currently supported.', messageType=MPAS_LOG_ERR)
          call mpas_log_write(' ***********************************************************', messageType=MPAS_LOG_CRIT)
 
       end if
@@ -429,7 +449,7 @@ module init_atm_cases
 
       !initialization of surface input variables technically not needed to run our current set of
       !idealized test cases:
-      if (config_init_case < 7)  then
+      if (config_init_case < 7 .or. config_init_case == 11 .or. (config_init_case >= 21 .and. config_init_case <= 23))  then
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
             call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
@@ -445,13 +465,14 @@ module init_atm_cases
 
 !----------------------------------------------------------------------------------------------------------
 
-   subroutine init_atm_case_jw(mesh, nCells, nVertLevels, state, diag, configs)
+   subroutine init_atm_case_jw(dminfo, mesh, nCells, nVertLevels, state, diag, configs, point_wind)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Setup baroclinic wave test case from Jablonowski and Williamson 2008 (QJRMS)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       implicit none
 
+      type (dm_info), intent(in) :: dminfo
       type (mpas_pool_type), intent(inout) :: mesh
       integer, intent(in) :: nCells
       integer, intent(in) :: nVertLevels
@@ -516,14 +537,17 @@ module init_atm_cases
       !  storage for (lat,z) arrays for zonal velocity calculation
 
       logical, parameter :: rebalance = .true.
-      integer, parameter :: nlat=721
+      integer, parameter :: nlat_default = 721
+      ! with point_wind the spacing of the 2d grid is at most the shortest cell distance over ratio_2d
+      real (kind=RKIND), parameter :: ratio_2d = 8.0
+      integer :: nlat
       real (kind=RKIND), dimension(nVertLevels) :: flux_zonal
-      real (kind=RKIND), dimension(nVertLevels + 1, nlat) :: zgrid_2d
-      real (kind=RKIND), dimension(nVertLevels, nlat) :: u_2d, pp_2d, rho_2d, qv_2d, etavs_2d, zz_2d
-      real (kind=RKIND), dimension(nVertLevels, nlat) :: p_2d, pb_2d, ppb_2d, rr_2d, rb_2d, tb_2d, rtb_2d
-      real (kind=RKIND), dimension(nVertLevels, nlat-1) :: zx_2d 
-      real (kind=RKIND), dimension(nlat) :: lat_2d
-      real (kind=RKIND) :: dlat, hx_1d
+      real (kind=RKIND), dimension(:,:), allocatable :: zgrid_2d
+      real (kind=RKIND), dimension(:,:), allocatable :: u_2d, pp_2d, rho_2d, qv_2d, etavs_2d, zz_2d
+      real (kind=RKIND), dimension(:,:), allocatable :: p_2d, pb_2d, ppb_2d, rr_2d, rb_2d, tb_2d, rtb_2d
+      real (kind=RKIND), dimension(:,:), allocatable :: zx_2d
+      real (kind=RKIND), dimension(:), allocatable :: lat_2d
+      real (kind=RKIND) :: dlat, hx_1d, dc_min
       real (kind=RKIND) :: z_edge, z_edge3, d2fdx2_cell1, d2fdx2_cell2
 
 !      logical, parameter :: moisture = .true.
@@ -544,10 +568,16 @@ module init_atm_cases
       real (kind=RKIND), pointer :: config_coef_3rd_order
       integer, pointer :: config_theta_adv_order
       integer, pointer :: config_init_case
+      ! cases 21 -- 23: point value at xEdge of the wind balanced against the pressure gradient of the model
+      logical, intent(in) :: point_wind
+      real (kind=RKIND), dimension(:), pointer :: angleEdge
+      integer :: jw_case
 
       character (len=StrKIND), pointer :: config_interface_projection
 
       call mpas_pool_get_config(configs, 'config_init_case', config_init_case)
+      jw_case = config_init_case
+      if (point_wind) jw_case = config_init_case - 20
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', config_coef_3rd_order)
       call mpas_pool_get_config(configs, 'config_theta_adv_order', config_theta_adv_order)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
@@ -645,6 +675,7 @@ module init_atm_cases
       call mpas_pool_get_array(mesh, 'lonVertex', lonVertex)
       call mpas_pool_get_array(mesh, 'latEdge', latEdge)
       call mpas_pool_get_array(mesh, 'lonEdge', lonEdge)
+      call mpas_pool_get_array(mesh, 'angleEdge', angleEdge)
       call mpas_pool_get_array(mesh, 'fEdge', fEdge)
       call mpas_pool_get_array(mesh, 'fVertex', fVertex)
 
@@ -656,7 +687,6 @@ module init_atm_cases
       scalars(:,:,:) = 0.0
       qsat(:,:)      = 0.0
       relhum(:,:)    = 0.0
-      qv_2d(:,:)     = 0.0
 !.. end initialization of moisture.
 
       surface_pressure(:) = 0.0
@@ -810,6 +840,18 @@ module init_atm_cases
 
 !**************  section for 2d (z,lat) calc for zonal velocity
 
+      nlat = nlat_default
+      if (point_wind) then
+        call mpas_dmpar_min_real(dminfo, minval(dcEdge(1:nEdges)), dc_min)
+        nlat = max(nlat_default, 1 + ceiling(0.5*pii*r_earth*ratio_2d/dc_min))
+      end if
+      call mpas_log_write(' latitudes of the 2d grid = $i', intArgs=(/nlat/))
+      allocate(zgrid_2d(nVertLevels+1,nlat), u_2d(nVertLevels,nlat), pp_2d(nVertLevels,nlat), rho_2d(nVertLevels,nlat), &
+               qv_2d(nVertLevels,nlat), etavs_2d(nVertLevels,nlat), zz_2d(nVertLevels,nlat), p_2d(nVertLevels,nlat), &
+               pb_2d(nVertLevels,nlat), ppb_2d(nVertLevels,nlat), rr_2d(nVertLevels,nlat), rb_2d(nVertLevels,nlat), &
+               tb_2d(nVertLevels,nlat), rtb_2d(nVertLevels,nlat), zx_2d(nVertLevels+1,nlat-1), lat_2d(nlat))
+      qv_2d(:,:) = 0.0
+
       dlat = 0.5*pii/float(nlat-1)
       do i = 1,nlat
 
@@ -914,13 +956,13 @@ module init_atm_cases
       if (rebalance) then
 
         do i=1,nlat-1
-          do k=1,nz1
+          do k=1,nz1+1
             zx_2d(k,i) = (zgrid_2d(k,i+1)-zgrid_2d(k,i))/(dlat*r_earth)
           end do
         end do
 
-        call init_atm_recompute_geostrophic_wind(u_2d, rho_2d, pp_2d, qv_2d, lat_2d, zz_2d, zx_2d,     &
-                                        cf1, cf2, cf3, fzm, fzp, rdzw, nz1, nlat, dlat, sphere_radius)
+        call init_atm_recompute_geostrophic_wind(u_2d, rho_2d, rb_2d, pp_2d, qv_2d, lat_2d, zz_2d, zx_2d, &
+                                        cf1, cf2, cf3, fzm, fzp, rdzw, nz1, nlat, dlat, sphere_radius, point_wind)
 
       end if
 
@@ -1072,24 +1114,40 @@ module init_atm_cases
          lat2 = latVertex(vtx2)
          iCell1 = cellsOnEdge(1,iEdge)
          iCell2 = cellsOnEdge(2,iEdge)
-         flux = (0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+         if (point_wind) then
+            flux = sin(2.0_RKIND*latEdge(iEdge))**2 * cos(angleEdge(iEdge))
+         else
+            flux = (0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+         end if
 
-         if (config_init_case == 2) then
+         if (jw_case == 2) then
             r_pert = sphere_distance( latEdge(iEdge), lonEdge(iEdge), &
                                       lat_pert, lon_pert, 1.0_RKIND)/(pert_radius)
-            u_pert = u_perturbation*exp(-r_pert**2)*(lat2-lat1) * sphere_radius / dvEdge(iEdge)
+            if (point_wind) then
+               u_pert = u_perturbation*exp(-r_pert**2)*cos(angleEdge(iEdge))
+            else
+               u_pert = u_perturbation*exp(-r_pert**2)*(lat2-lat1) * sphere_radius / dvEdge(iEdge)
+            end if
 
-         else if (config_init_case == 3) then
+         else if (jw_case == 3) then
             lon_Edge = lonEdge(iEdge)
-            u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert)) &
-                         *(0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+            if (point_wind) then
+               u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert))*flux
+            else
+               u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert)) &
+                            *(0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
+            end if
          else
             u_pert = 0.0
          end if
 
          if (rebalance) then
 
-           call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat)
+           if (point_wind) then
+             call init_atm_calc_point_zonal(u_2d,lat_2d,flux_zonal,latEdge(iEdge),cos(angleEdge(iEdge)),u0,nz1,nlat)
+           else
+             call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat)
+           end if
            do k=1,nVertLevels
              fluxk = u0*flux_zonal(k)/(0.5*(rb(k,iCell1)+rb(k,iCell2)+rr(k,iCell1)+rr(k,iCell2)))
              u(k,iEdge) = fluxk + u_pert
@@ -1304,16 +1362,51 @@ module init_atm_cases
    end subroutine init_atm_calc_flux_zonal
 
 
+   subroutine init_atm_calc_point_zonal(u_2d,lat_2d,flux_zonal,lat_in,nzonal,u0,nz1,nlat)
+
+      ! u_2d at the latitude lat_in times nzonal, the zonal component of the edge normal,
+      ! over u0, by Lagrange interpolation of degree npts - 1 on the uniform grid lat_2d
+
+      implicit none
+
+      integer, intent(in) :: nz1,nlat
+      real (kind=RKIND), dimension(nz1,nlat), intent(in) :: u_2d
+      real (kind=RKIND), dimension(nlat), intent(in) :: lat_2d
+      real (kind=RKIND), dimension(nz1), intent(out) :: flux_zonal
+      real (kind=RKIND), intent(in) :: lat_in, nzonal, u0
+
+      integer, parameter :: npts = 4
+      integer :: i0, j, m
+      real (kind=RKIND) :: lat
+      real (kind=RKIND), dimension(npts) :: w
+
+      lat = abs(lat_in)
+      i0 = min(max(int(lat/lat_2d(2)) + 1 - (npts/2 - 1), 1), nlat - npts + 1)
+      do j=1,npts
+        w(j) = nzonal/u0
+        do m=1,npts
+          if (m /= j) w(j) = w(j)*(lat - lat_2d(i0+m-1))/(lat_2d(i0+j-1) - lat_2d(i0+m-1))
+        end do
+      end do
+      flux_zonal(:) = 0.0_RKIND
+      do j=1,npts
+        flux_zonal(:) = flux_zonal(:) + w(j)*u_2d(:,i0+j-1)
+      end do
+
+   end subroutine init_atm_calc_point_zonal
+
+
    !SHP-balance
-   subroutine init_atm_recompute_geostrophic_wind(u_2d,rho_2d,pp_2d,qv_2d,lat_2d,zz_2d,zx_2d,     &
-                                         cf1,cf2,cf3,fzm,fzp,rdzw,nz1,nlat,dlat,rad)
+   subroutine init_atm_recompute_geostrophic_wind(u_2d,rho_2d,rb_2d,pp_2d,qv_2d,lat_2d,zz_2d,zx_2d,     &
+                                         cf1,cf2,cf3,fzm,fzp,rdzw,nz1,nlat,dlat,rad,model_pgf)
 
       implicit none
    
       integer, intent(in) :: nz1,nlat
       real (kind=RKIND), dimension(nz1,nlat), intent(inout) :: u_2d
-      real (kind=RKIND), dimension(nz1,nlat), intent(in) :: rho_2d, pp_2d, qv_2d, zz_2d
-      real (kind=RKIND), dimension(nz1,nlat-1), intent(in) :: zx_2d
+      real (kind=RKIND), dimension(nz1,nlat), intent(in) :: rho_2d, rb_2d, pp_2d, qv_2d, zz_2d
+      real (kind=RKIND), dimension(nz1+1,nlat-1), intent(in) :: zx_2d
+      logical, intent(in) :: model_pgf
       real (kind=RKIND), dimension(nlat), intent(in) :: lat_2d
       real (kind=RKIND), dimension(nz1), intent(in) :: fzm, fzp, rdzw
       real (kind=RKIND), intent(in) :: cf1, cf2, cf3, dlat, rad
@@ -1322,6 +1415,7 @@ module init_atm_cases
       real (kind=RKIND), dimension(nz1,nlat-1) :: pgrad, ru, u
       real (kind=RKIND), dimension(nlat-1) :: f
       real (kind=RKIND), dimension(nz1+1)  :: dpzx
+      real (kind=RKIND), dimension(nz1,nlat) :: dpdz
    
    !   real (kind=RKIND), parameter :: omega_e = 7.29212e-05
       real (kind=RKIND) :: omega_e
@@ -1332,8 +1426,19 @@ module init_atm_cases
       r_earth  = rad
       omega_e = omega
       rdx = 1./(dlat*r_earth)
+
+      ! hydrostatic dp'/dz of the model, as in the large-step pressure gradient
+      if (model_pgf) dpdz(:,:) = -gravity*(rho_2d(:,:)*(1.+qv_2d(:,:)) - rb_2d(:,:))
    
       do i=1,nlat-1
+        if (model_pgf) then
+          do k=1,nz1
+            pgrad(k,i) = rdx*(pp_2d(k,i+1)-pp_2d(k,i))/(.5*(zz_2d(k,i)+zz_2d(k,i+1))) &
+                       - .25*(zx_2d(k,i)+zx_2d(k+1,i))*(dpdz(k,i)+dpdz(k,i+1))
+          end do
+          cycle
+        end if
+
         do k=1,nz1
           pgrad(k,i) = rdx*(pp_2d(k,i+1)/zz_2d(k,i+1)-pp_2d(k,i)/zz_2d(k,i))
         end do
@@ -1401,6 +1506,239 @@ module init_atm_cases
       end do
 
    end subroutine init_atm_recompute_geostrophic_wind
+
+
+   subroutine init_atm_case_zonal_steady(mesh, nCells, nVertLevels, state, diag, configs)
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   ! Steady isothermal solid-body zonal flow over a flat surface: u = u0 cos(lat),
+   ! w = 0, T = t0, p = p_eq exp(-((a omega u0 + u0^2/2) sin^2(lat) + g z) / (R t0)),
+   ! an exact steady solution of the shallow-atmosphere equations. Uniform levels
+   ! up to config_ztop. The pressure is in discrete hydrostatic balance in each
+   ! column, and u at an edge is the point value of the normal velocity at xEdge.
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      integer, intent(in) :: nCells
+      integer, intent(in) :: nVertLevels
+      type (mpas_pool_type), intent(inout) :: state
+      type (mpas_pool_type), intent(inout) :: diag
+      type (mpas_pool_type), intent(in) :: configs
+
+      real (kind=RKIND), parameter :: t0 = 300.0_RKIND      ! temperature (K)
+      real (kind=RKIND), parameter :: p_eq = 1.0e5_RKIND    ! surface pressure at the equator (Pa)
+      real (kind=RKIND), parameter :: period = 12.0_RKIND * 86400.0_RKIND  ! solid-body rotation period (s)
+
+      real (kind=RKIND), dimension(:), pointer :: rdzw, dzu, rdzu, fzm, fzp
+      real (kind=RKIND), dimension(:,:), pointer :: zgrid, zxu, zz, hx, dss
+      real (kind=RKIND), dimension(:,:), pointer :: ppb, pb, rho_zz, rb, rr, tb, rtb, p, pp, t, rt
+      real (kind=RKIND), dimension(:,:), pointer :: u, ru, w, rw, v
+      real (kind=RKIND), dimension(:,:,:), pointer :: zb, zb3, scalars
+      real (kind=RKIND), dimension(:), pointer :: xCell, yCell, zCell, xEdge, yEdge, zEdge, xVertex, yVertex, zVertex
+      real (kind=RKIND), dimension(:), pointer :: dcEdge, dvEdge, areaCell, areaTriangle
+      real (kind=RKIND), dimension(:,:), pointer :: kiteAreasOnVertex, weightsOnEdge
+      real (kind=RKIND), dimension(:), pointer :: latCell, latEdge, latVertex, angleEdge, fEdge, fVertex
+      real (kind=RKIND), pointer :: nominalMinDc, sphere_radius, config_ztop, cf1, cf2, cf3
+      logical, pointer :: on_a_sphere
+      integer, dimension(:), pointer :: nEdgesOnEdge
+      integer, dimension(:,:), pointer :: edgesOnEdge, cellsOnEdge
+      integer, pointer :: nEdges, maxEdges, nVertices
+      character (len=StrKIND), pointer :: config_interface_projection
+
+      integer :: iCell, iEdge, iVtx, i, k, nz, cell1, cell2
+      real (kind=RKIND) :: u0, b, ps, dps, cof1, cof2
+      real (kind=RKIND), dimension(nVertLevels+1) :: zw
+      real (kind=RKIND), dimension(nVertLevels) :: dzw, crr, spp
+
+      call mpas_pool_get_config(configs, 'config_ztop', config_ztop)
+      call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
+      call mpas_pool_get_config(mesh, 'on_a_sphere', on_a_sphere)
+      call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
+
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
+      call mpas_pool_get_dimension(mesh, 'maxEdges', maxEdges)
+
+      call mpas_pool_get_array(mesh, 'xCell', xCell)
+      call mpas_pool_get_array(mesh, 'yCell', yCell)
+      call mpas_pool_get_array(mesh, 'zCell', zCell)
+      call mpas_pool_get_array(mesh, 'xEdge', xEdge)
+      call mpas_pool_get_array(mesh, 'yEdge', yEdge)
+      call mpas_pool_get_array(mesh, 'zEdge', zEdge)
+      call mpas_pool_get_array(mesh, 'xVertex', xVertex)
+      call mpas_pool_get_array(mesh, 'yVertex', yVertex)
+      call mpas_pool_get_array(mesh, 'zVertex', zVertex)
+      call mpas_pool_get_array(mesh, 'dvEdge', dvEdge)
+      call mpas_pool_get_array(mesh, 'dcEdge', dcEdge)
+      call mpas_pool_get_array(mesh, 'areaCell', areaCell)
+      call mpas_pool_get_array(mesh, 'areaTriangle', areaTriangle)
+      call mpas_pool_get_array(mesh, 'kiteAreasOnVertex', kiteAreasOnVertex)
+      call mpas_pool_get_array(mesh, 'nominalMinDc', nominalMinDc)
+      call mpas_pool_get_array(mesh, 'weightsOnEdge', weightsOnEdge)
+      call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
+      call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
+      call mpas_pool_get_array(mesh, 'latCell', latCell)
+      call mpas_pool_get_array(mesh, 'latEdge', latEdge)
+      call mpas_pool_get_array(mesh, 'latVertex', latVertex)
+      call mpas_pool_get_array(mesh, 'angleEdge', angleEdge)
+      call mpas_pool_get_array(mesh, 'fEdge', fEdge)
+      call mpas_pool_get_array(mesh, 'fVertex', fVertex)
+      call mpas_pool_get_array(mesh, 'zgrid', zgrid)
+      call mpas_pool_get_array(mesh, 'rdzw', rdzw)
+      call mpas_pool_get_array(mesh, 'dzu', dzu)
+      call mpas_pool_get_array(mesh, 'rdzu', rdzu)
+      call mpas_pool_get_array(mesh, 'fzm', fzm)
+      call mpas_pool_get_array(mesh, 'fzp', fzp)
+      call mpas_pool_get_array(mesh, 'zxu', zxu)
+      call mpas_pool_get_array(mesh, 'zz', zz)
+      call mpas_pool_get_array(mesh, 'hx', hx)
+      call mpas_pool_get_array(mesh, 'dss', dss)
+      call mpas_pool_get_array(mesh, 'zb', zb)
+      call mpas_pool_get_array(mesh, 'zb3', zb3)
+      call mpas_pool_get_array(mesh, 'cf1', cf1)
+      call mpas_pool_get_array(mesh, 'cf2', cf2)
+      call mpas_pool_get_array(mesh, 'cf3', cf3)
+
+      call mpas_pool_get_array(diag, 'exner_base', pb)
+      call mpas_pool_get_array(diag, 'rho_base', rb)
+      call mpas_pool_get_array(diag, 'rho_p', rr)
+      call mpas_pool_get_array(diag, 'theta_base', tb)
+      call mpas_pool_get_array(diag, 'rtheta_base', rtb)
+      call mpas_pool_get_array(diag, 'rtheta_p', rt)
+      call mpas_pool_get_array(diag, 'exner', p)
+      call mpas_pool_get_array(diag, 'pressure_base', ppb)
+      call mpas_pool_get_array(diag, 'pressure_p', pp)
+      call mpas_pool_get_array(diag, 'ru', ru)
+      call mpas_pool_get_array(diag, 'rw', rw)
+      call mpas_pool_get_array(diag, 'v', v)
+
+      call mpas_pool_get_array(state, 'rho_zz', rho_zz)
+      call mpas_pool_get_array(state, 'theta_m', t)
+      call mpas_pool_get_array(state, 'scalars', scalars)
+      call mpas_pool_get_array(state, 'u', u)
+      call mpas_pool_get_array(state, 'w', w)
+
+      ! mesh from the unit sphere to the sphere of radius sphere_radius
+      xCell(:) = xCell(:) * sphere_radius
+      yCell(:) = yCell(:) * sphere_radius
+      zCell(:) = zCell(:) * sphere_radius
+      xVertex(:) = xVertex(:) * sphere_radius
+      yVertex(:) = yVertex(:) * sphere_radius
+      zVertex(:) = zVertex(:) * sphere_radius
+      xEdge(:) = xEdge(:) * sphere_radius
+      yEdge(:) = yEdge(:) * sphere_radius
+      zEdge(:) = zEdge(:) * sphere_radius
+      dvEdge(:) = dvEdge(:) * sphere_radius
+      dcEdge(:) = dcEdge(:) * sphere_radius
+      areaCell(:) = areaCell(:) * sphere_radius**2
+      areaTriangle(:) = areaTriangle(:) * sphere_radius**2
+      kiteAreasOnVertex(:,:) = kiteAreasOnVertex(:,:) * sphere_radius**2
+      nominalMinDc = nominalMinDc * sphere_radius
+
+      call atm_initialize_advection_rk(mesh, nCells, nEdges, maxEdges, on_a_sphere, sphere_radius)
+      call atm_initialize_deformation_weights(mesh, nCells, on_a_sphere, sphere_radius)
+
+      u0 = 2.0_RKIND * pii * sphere_radius / period
+      b = (sphere_radius * omega * u0 + 0.5_RKIND * u0**2) / (rgas * t0)
+      call mpas_log_write(' isothermal solid-body zonal flow: u0 = $r m/s, t0 = $r K, ztop = $r m', &
+                          realArgs=(/u0, t0, config_ztop/))
+
+      ! uniform levels over a flat surface: zeta = z
+      nz = nVertLevels + 1
+      do k = 1, nz
+         zw(k) = real(k-1,RKIND) * config_ztop / real(nVertLevels,RKIND)
+      end do
+      do k = 1, nVertLevels
+         dzw(k) = zw(k+1) - zw(k)
+         rdzw(k) = 1.0_RKIND / dzw(k)
+      end do
+      do k = 2, nVertLevels
+         dzu(k) = 0.5_RKIND * (dzw(k) + dzw(k-1))
+         rdzu(k) = 1.0_RKIND / dzu(k)
+      end do
+      if (trim(config_interface_projection) == 'linear_interpolation') then
+         do k = 2, nVertLevels
+            fzp(k) = 0.5_RKIND * dzw(k) / dzu(k)
+            fzm(k) = 0.5_RKIND * dzw(k-1) / dzu(k)
+         end do
+      else if (trim(config_interface_projection) == 'layer_integral') then
+         do k = 2, nVertLevels
+            fzm(k) = 0.5_RKIND * dzw(k) / dzu(k)
+            fzp(k) = 0.5_RKIND * dzw(k-1) / dzu(k)
+         end do
+      else
+         call mpas_log_write('only linear_interpolation or layer_integral are supported', messageType=MPAS_LOG_CRIT)
+      end if
+      cof1 = (2.0_RKIND * dzu(2) + dzu(3)) / (dzu(2) + dzu(3)) * dzw(1) / dzu(2)
+      cof2 = dzu(2) / (dzu(2) + dzu(3)) * dzw(1) / dzu(3)
+      cf1 = fzp(2) + cof1
+      cf2 = fzm(2) - cof1 - cof2
+      cf3 = cof2
+
+      do iCell = 1, nCells
+         zgrid(:,iCell) = zw(:)
+         hx(:,iCell) = 0.0_RKIND
+         zz(:,iCell) = 1.0_RKIND
+         dss(:,iCell) = 0.0_RKIND
+      end do
+      zxu(:,:) = 0.0_RKIND
+      zb(:,:,:) = 0.0_RKIND
+      zb3(:,:,:) = 0.0_RKIND
+
+      ! Pressure in the discrete hydrostatic balance of the solver,
+      ! p(k) - p(k-1) = -dzu(k) g (fzm(k) rho_zz(k) + fzp(k) rho_zz(k-1)) with rho_zz = crr p,
+      ! for the full state and for the base state (the atmosphere at rest, p_eq at the
+      ! surface), so that p(k) / p(1) = spp(k) in every column and the vertical truncation
+      ! error does not enter the horizontal balance. The surface pressure, extrapolated
+      ! as in decouple_variables, is p(1) dps.
+      crr(:) = 1.0_RKIND / (rgas * t0 * zz(:,1))
+      spp(1) = 1.0_RKIND
+      do k = 2, nVertLevels
+         spp(k) = spp(k-1) * (1.0_RKIND - dzu(k) * gravity * fzp(k) * crr(k-1)) &
+                           / (1.0_RKIND + dzu(k) * gravity * fzm(k) * crr(k))
+      end do
+      dps = 1.0_RKIND + 0.5_RKIND * dzw(1) * gravity * (1.25_RKIND * crr(1) - 0.25_RKIND * crr(2) * spp(2))
+      do iCell = 1, nCells
+         ps = p_eq * exp(-b * sin(latCell(iCell))**2)
+         do k = 1, nVertLevels
+            ppb(k,iCell) = spp(k) * p_eq / dps
+            pb(k,iCell) = (ppb(k,iCell) / p0)**(rgas / cp)
+            rb(k,iCell) = crr(k) * ppb(k,iCell)
+            tb(k,iCell) = t0 / pb(k,iCell)
+            rtb(k,iCell) = rb(k,iCell) * tb(k,iCell)
+            pp(k,iCell) = spp(k) * (ps - p_eq) / dps
+            rr(k,iCell) = crr(k) * pp(k,iCell)
+            rho_zz(k,iCell) = rb(k,iCell) + rr(k,iCell)
+            p(k,iCell) = ((ppb(k,iCell) + pp(k,iCell)) / p0)**(rgas / cp)
+            t(k,iCell) = t0 / p(k,iCell)
+            rt(k,iCell) = t(k,iCell) * rr(k,iCell) + rb(k,iCell) * (t(k,iCell) - tb(k,iCell))
+         end do
+      end do
+      scalars(:,:,:) = 0.0_RKIND
+
+      do iEdge = 1, nEdges
+         cell1 = cellsOnEdge(1,iEdge)
+         cell2 = cellsOnEdge(2,iEdge)
+         u(:,iEdge) = u0 * cos(latEdge(iEdge)) * cos(angleEdge(iEdge))
+         ru(:,iEdge) = 0.5_RKIND * (rho_zz(:,cell1) + rho_zz(:,cell2)) * u(:,iEdge)
+         fEdge(iEdge) = 2.0_RKIND * omega * sin(latEdge(iEdge))
+      end do
+      do iVtx = 1, nVertices
+         fVertex(iVtx) = 2.0_RKIND * omega * sin(latVertex(iVtx))
+      end do
+      w(:,:) = 0.0_RKIND
+      rw(:,:) = 0.0_RKIND
+
+      v(:,:) = 0.0_RKIND
+      do iEdge = 1, nEdges
+         do i = 1, nEdgesOnEdge(iEdge)
+            v(:,iEdge) = v(:,iEdge) + weightsOnEdge(i,iEdge) * u(:,edgesOnEdge(i,iEdge))
+         end do
+      end do
+
+   end subroutine init_atm_case_zonal_steady
 
 
    subroutine init_atm_case_squall_line(dminfo, mesh, nCells, nVertLevels, state, diag, configs, test_case)

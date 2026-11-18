@@ -66,8 +66,10 @@
                                         8 = surface field (SST, sea-ice) update file for use with real-data simulations \newline
                                         9 = lateral boundary conditions update file for use with real-data simulations \newline
                                         10 = idealized LES case \newline
-                                        13 = CAM-MPAS 3-d grid with specified topography and zeta levels"
-                     possible_values="1 -- 10, or 13"/>
+                                        11 = isothermal solid-body zonal flow, steady state, with the point value of the normal wind at xEdge \newline
+                                        13 = CAM-MPAS 3-d grid with specified topography and zeta levels \newline
+                                        21, 22, 23 = cases 1, 2, 3 with the point value of the normal wind at xEdge, from the zonal wind balanced against the pressure gradient of the model on a latitude grid refined to the mesh"
+                     possible_values="1 -- 11, 13, or 21 -- 23"/>
 
                 <nml_option name="config_calendar_type" type="character" default_value="gregorian" in_defaults="false"
                      units="-"
