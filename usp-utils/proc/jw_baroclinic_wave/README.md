@@ -84,7 +84,7 @@ $MPAS_GRIDS/<mesh>/              NCAR grid and partitions, <mesh>.grid.regen.nc 
 
 The table is `scheme_options` in [`../schemes.sh`](../schemes.sh), the only place that maps a name to namelist options. A name
 ending in `+em` also sets `config_edge_midpoint_flux = true` (F(Cons)). Other options go in
-`$JW_NHYD_EXTRA`, e.g. `config_acoustic_pgf_zz = true`. The kinetic energy blend is the default
+`$JW_NHYD_EXTRA`, e.g. `config_smdiv = 0.1`. The kinetic energy blend is the default
 `config_ke_cell_weight` (0.625), or the cell estimate alone (weight 1.0) in the configurations without `-vke`
 or `-newke`.
 
