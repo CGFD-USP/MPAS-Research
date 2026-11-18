@@ -2,7 +2,8 @@
 
 OBJS = mpas_atm_time_integration.o \
        mpas_atm_boundaries.o \
-       mpas_atm_dissipation_models.o
+       mpas_atm_dissipation_models.o \
+       mpas_atm_consistent_operators.o
 
 all: $(OBJS)
 

@@ -126,9 +126,10 @@ module atm_time_integration
    !>
    !>  1) config_positive_definite == .false.
    !>  2) 0 <= config_ke_cell_weight <= 1
+   !>  3) config_ke_reconstruction is 'trsk', 'perot' or 'lsq2'
    !>
-   !>  A failed check 1) only prints a warning. A failed check 2) prints an
-   !>  error and returns a non-zero value in the ierr argument.
+   !>  A failed check 1) only prints a warning. A failed check 2) or 3) prints
+   !>  an error and returns a non-zero value in the ierr argument.
    !
    !-----------------------------------------------------------------------
    subroutine mpas_atm_dynamics_checks(dminfo, blockList, streamManager, ierr)
@@ -147,6 +148,7 @@ module atm_time_integration
        logical, pointer :: config_positive_definite
        real (kind=RKIND), pointer :: config_epssm
        real (kind=RKIND), pointer :: config_ke_cell_weight
+       character (len=StrKIND), pointer :: config_ke_reconstruction
 
 
        ierr = 0
@@ -209,6 +211,16 @@ module atm_time_integration
        if (config_ke_cell_weight < 0.0_RKIND .or. config_ke_cell_weight > 1.0_RKIND) then
            call mpas_log_write('config_ke_cell_weight = $r is outside [0, 1].', realArgs=(/config_ke_cell_weight/), &
                                messageType=MPAS_LOG_ERR)
+           ierr = 1
+       end if
+
+       nullify(config_ke_reconstruction)
+       call mpas_pool_get_config(blocklist % configs, 'config_ke_reconstruction', config_ke_reconstruction)
+
+       if (trim(config_ke_reconstruction) /= 'trsk' .and. trim(config_ke_reconstruction) /= 'perot' .and. &
+           trim(config_ke_reconstruction) /= 'lsq2') then
+           call mpas_log_write('config_ke_reconstruction = '''//trim(config_ke_reconstruction)//''' is not supported,'// &
+                               ' use ''trsk'', ''perot'' or ''lsq2''.', messageType=MPAS_LOG_ERR)
            ierr = 1
        end if
 
@@ -301,6 +313,8 @@ module atm_time_integration
       real (kind=RKIND), dimension(:), pointer :: latCell
       real (kind=RKIND), dimension(:), pointer :: lonCell
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct
+      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct_vertex
+      character (len=StrKIND), pointer :: config_ke_reconstruction
       real (kind=RKIND), dimension(:), pointer :: latEdge
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: meshScalingDel2
@@ -532,6 +546,12 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'deformation_coef_s', deformation_coef_s)
       !$acc enter data copyin(deformation_coef_s)
 
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_ke_reconstruction', config_ke_reconstruction)
+      if (trim(config_ke_reconstruction) /= 'trsk') then
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+         !$acc enter data copyin(coeffs_reconstruct_vertex)
+      end if
+
       MPAS_ACC_TIMER_STOP('mpas_dynamics_init [ACC_data_xfer]')
 #endif
 
@@ -593,6 +613,8 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), pointer :: kiteAreasOnVertex
       real (kind=RKIND), dimension(:), pointer :: fEdge
       real (kind=RKIND), dimension(:), pointer :: fVertex
+      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
+      character (len=StrKIND), pointer :: config_ke_reconstruction
 
       nullify(mesh)
       call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
@@ -722,6 +744,13 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'fVertex', fVertex)
       !$acc enter data copyin(fVertex)
 
+      call mpas_pool_get_config(block % configs, 'config_ke_reconstruction', config_ke_reconstruction)
+      if (trim(config_ke_reconstruction) /= 'trsk') then
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct', coeffs_reconstruct)
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+         !$acc enter data copyin(coeffs_reconstruct, coeffs_reconstruct_vertex)
+      end if
+
       MPAS_ACC_TIMER_STOP('first_compute_solve_diagnostics [ACC_data_xfer]')
 #endif
 
@@ -784,6 +813,8 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), pointer :: kiteAreasOnVertex
       real (kind=RKIND), dimension(:), pointer :: fEdge
       real (kind=RKIND), dimension(:), pointer :: fVertex
+      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
+      character (len=StrKIND), pointer :: config_ke_reconstruction
 
       nullify(mesh)
       call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
@@ -902,6 +933,13 @@ module atm_time_integration
 
       call mpas_pool_get_array(mesh, 'fVertex', fVertex)
       !$acc exit data delete(fVertex)
+
+      call mpas_pool_get_config(block % configs, 'config_ke_reconstruction', config_ke_reconstruction)
+      if (trim(config_ke_reconstruction) /= 'trsk') then
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct', coeffs_reconstruct)
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+         !$acc exit data delete(coeffs_reconstruct, coeffs_reconstruct_vertex)
+      end if
 
       MPAS_ACC_TIMER_STOP('first_compute_solve_diagnostics [ACC_data_xfer]')
 #endif
@@ -1562,6 +1600,8 @@ module atm_time_integration
       real (kind=RKIND), dimension(:), pointer :: latCell
       real (kind=RKIND), dimension(:), pointer :: lonCell
       real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct
+      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct_vertex
+      character (len=StrKIND), pointer :: config_ke_reconstruction
       real (kind=RKIND), dimension(:), pointer :: latEdge
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: meshScalingDel2
@@ -1791,6 +1831,12 @@ module atm_time_integration
 
       call mpas_pool_get_array(mesh, 'deformation_coef_s', deformation_coef_s)
       !$acc exit data delete(deformation_coef_s)
+
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_ke_reconstruction', config_ke_reconstruction)
+      if (trim(config_ke_reconstruction) /= 'trsk') then
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+         !$acc exit data delete(coeffs_reconstruct_vertex)
+      end if
 #endif
 
    end subroutine mpas_atm_dynamics_finalize
@@ -7012,10 +7058,13 @@ module atm_time_integration
 
       real (kind=RKIND), pointer :: config_apvm_upwinding
       real (kind=RKIND), pointer :: config_ke_cell_weight
+      character (len=StrKIND), pointer :: config_ke_reconstruction
+      real (kind=RKIND), dimension(:,:,:), pointer :: coeffs_reconstruct, coeffs_reconstruct_vertex
 
 
       call mpas_pool_get_config(configs, 'config_apvm_upwinding', config_apvm_upwinding)
       call mpas_pool_get_config(configs, 'config_ke_cell_weight', config_ke_cell_weight)
+      call mpas_pool_get_config(configs, 'config_ke_reconstruction', config_ke_reconstruction)
 
       call mpas_pool_get_array(state, 'rho_zz', h, time_lev)
       call mpas_pool_get_array(state, 'u', u, time_lev)
@@ -7053,6 +7102,8 @@ module atm_time_integration
       call mpas_pool_get_array(mesh, 'invAreaTriangle', invAreaTriangle)
       call mpas_pool_get_array(mesh, 'fVertex', fVertex)
       call mpas_pool_get_array(mesh, 'fEdge', fEdge)
+      call mpas_pool_get_array(mesh, 'coeffs_reconstruct', coeffs_reconstruct)
+      call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
 
       call mpas_pool_get_dimension(mesh, 'nCells', nCells)
       call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
@@ -7066,6 +7117,7 @@ module atm_time_integration
                weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
                gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
                edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
+               trim(config_ke_reconstruction) /= 'trsk', coeffs_reconstruct, coeffs_reconstruct_vertex, &
                cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
                rk_step)
 
@@ -7078,6 +7130,7 @@ module atm_time_integration
             weightsOnEdge, kiteAreasOnVertex, h_edge, h, u, v, vorticity, ke, pv_edge, pv_vertex, pv_cell, &
             gradPVn, gradPVt, divergence, cellsOnEdge, cellsOnVertex, verticesOnEdge, edgesOnCell, edgesOnEdge, &
             edgesOnVertex, kiteForCell, verticesOnCell, edgesOnVertex_sign, edgesOnCell_sign, nEdgesOnCell, nEdgesOnEdge, &
+            ke_reconstructed, coeffs_reconstruct, coeffs_reconstruct_vertex, &
             cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
             rk_step)
 
@@ -7124,6 +7177,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(maxEdges,nCells+1) :: edgesOnCell_sign
       integer, dimension(nCells+1) :: nEdgesOnCell
       integer, dimension(nEdges+1) :: nEdgesOnEdge
+      logical, intent(in) :: ke_reconstructed
+      real (kind=RKIND), dimension(3,maxEdges,nCells+1) :: coeffs_reconstruct
+      real (kind=RKIND), dimension(3,vertexDegree,nVertices+1) :: coeffs_reconstruct_vertex
 
       integer, intent(in) :: cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd
 
@@ -7139,6 +7195,7 @@ module atm_time_integration
       logical, parameter :: hollingsworth=.true.
       real (kind=RKIND) :: ke_fact, efac
       logical :: reconstruct_v
+      real (kind=RKIND), dimension(nVertLevels) :: ux, uy, uz
 
 
 
@@ -7159,11 +7216,13 @@ module atm_time_integration
 !  the first openmp barrier below is set so that ke_edge is computed
 !  it would be good to move this somewhere else?
 
-         efac = dcEdge(iEdge)*dvEdge(iEdge)
-         !$acc loop vector
-         do k=1,nVertLevels
-            ke_edge(k,iEdge) = efac*u(k,iEdge)**2
-         end do
+         if (.not. ke_reconstructed) then
+            efac = dcEdge(iEdge)*dvEdge(iEdge)
+            !$acc loop vector
+            do k=1,nVertLevels
+               ke_edge(k,iEdge) = efac*u(k,iEdge)**2
+            end do
+         end if
 
       end do
 
@@ -7229,29 +7288,64 @@ module atm_time_integration
       !
       ! Replace 2.0 with 2 in exponentiation to avoid outside chance that
       ! compiler will actually allow "float raised to float" operation
-      !$acc parallel default(present)
-      !$acc loop gang
-      do iCell=cellStart,cellEnd
-         !$acc loop vector
-         do k=1,nVertLevels
-            ke(k,iCell) = 0.0_RKIND
-         end do
-         !$acc loop seq
-         do i=1,nEdgesOnCell(iCell)
-            iEdge = edgesOnCell(i,iCell)
+      if (ke_reconstructed) then
+
+         ! kinetic energy of the velocity vector reconstructed from the edges of the cell
+         !$acc parallel default(present)
+         !$acc loop gang private(ux, uy, uz)
+         do iCell=cellStart,cellEnd
             !$acc loop vector
             do k=1,nVertLevels
-!               ke(k,iCell) = ke(k,iCell) + 0.25 * dcEdge(iEdge) * dvEdge(iEdge) * u(k,iEdge)**2
-               ke(k,iCell) = ke(k,iCell) + 0.25 * ke_edge(k,iEdge)
+               ux(k) = 0.0_RKIND
+               uy(k) = 0.0_RKIND
+               uz(k) = 0.0_RKIND
+            end do
+            !$acc loop seq
+            do i=1,nEdgesOnCell(iCell)
+               iEdge = edgesOnCell(i,iCell)
+!DIR$ IVDEP
+               !$acc loop vector
+               do k=1,nVertLevels
+                  ux(k) = ux(k) + coeffs_reconstruct(1,i,iCell) * u(k,iEdge)
+                  uy(k) = uy(k) + coeffs_reconstruct(2,i,iCell) * u(k,iEdge)
+                  uz(k) = uz(k) + coeffs_reconstruct(3,i,iCell) * u(k,iEdge)
+               end do
+            end do
+!DIR$ IVDEP
+            !$acc loop vector
+            do k=1,nVertLevels
+               ke(k,iCell) = 0.5_RKIND * (ux(k)**2 + uy(k)**2 + uz(k)**2)
             end do
          end do
+         !$acc end parallel
+
+      else
+
+         !$acc parallel default(present)
+         !$acc loop gang
+         do iCell=cellStart,cellEnd
+            !$acc loop vector
+            do k=1,nVertLevels
+               ke(k,iCell) = 0.0_RKIND
+            end do
+            !$acc loop seq
+            do i=1,nEdgesOnCell(iCell)
+               iEdge = edgesOnCell(i,iCell)
+               !$acc loop vector
+               do k=1,nVertLevels
+!                  ke(k,iCell) = ke(k,iCell) + 0.25 * dcEdge(iEdge) * dvEdge(iEdge) * u(k,iEdge)**2
+                  ke(k,iCell) = ke(k,iCell) + 0.25 * ke_edge(k,iEdge)
+               end do
+            end do
 !DIR$ IVDEP
-         !$acc loop vector
-         do k=1,nVertLevels
-            ke(k,iCell) = ke(k,iCell) * invAreaCell(iCell)
+            !$acc loop vector
+            do k=1,nVertLevels
+               ke(k,iCell) = ke(k,iCell) * invAreaCell(iCell)
+            end do
          end do
-      end do
-      !$acc end parallel
+         !$acc end parallel
+
+      end if
 
 
       if (hollingsworth) then
@@ -7262,23 +7356,58 @@ module atm_time_integration
 
          ! Replace 2.0 with 2 in exponentiation to avoid outside chance that
          ! compiler will actually allow "float raised to float" operation
-         !$acc parallel default(present)
-         !$acc loop gang
-         do iVertex=vertexStart,vertexEnd
-            r = 0.25 * invAreaTriangle(iVertex) 
-            !$acc loop vector
-            do k=1,nVertLevels
+         if (ke_reconstructed) then
 
-!               ke_vertex(k,iVertex) = (  dcEdge(EdgesOnVertex(1,iVertex))*dvEdge(EdgesOnVertex(1,iVertex))*u(k,EdgesOnVertex(1,iVertex))**2  &
-!                                        +dcEdge(EdgesOnVertex(2,iVertex))*dvEdge(EdgesOnVertex(2,iVertex))*u(k,EdgesOnVertex(2,iVertex))**2  &
-!                                        +dcEdge(EdgesOnVertex(3,iVertex))*dvEdge(EdgesOnVertex(3,iVertex))*u(k,EdgesOnVertex(3,iVertex))**2  &
-!                                      ) * r
-
-               ke_vertex(k,iVertex) = (  ke_edge(k,EdgesOnVertex(1,iVertex))+ke_edge(k,EdgesOnVertex(2,iVertex))+ke_edge(k,EdgesOnVertex(3,iVertex)) )*r
-
+            ! kinetic energy of the velocity vector reconstructed from the edges of the vertex
+            !$acc parallel default(present)
+            !$acc loop gang private(ux, uy, uz)
+            do iVertex=vertexStart,vertexEnd
+               !$acc loop vector
+               do k=1,nVertLevels
+                  ux(k) = 0.0_RKIND
+                  uy(k) = 0.0_RKIND
+                  uz(k) = 0.0_RKIND
+               end do
+               !$acc loop seq
+               do i=1,vertexDegree
+                  iEdge = edgesOnVertex(i,iVertex)
+!DIR$ IVDEP
+                  !$acc loop vector
+                  do k=1,nVertLevels
+                     ux(k) = ux(k) + coeffs_reconstruct_vertex(1,i,iVertex) * u(k,iEdge)
+                     uy(k) = uy(k) + coeffs_reconstruct_vertex(2,i,iVertex) * u(k,iEdge)
+                     uz(k) = uz(k) + coeffs_reconstruct_vertex(3,i,iVertex) * u(k,iEdge)
+                  end do
+               end do
+!DIR$ IVDEP
+               !$acc loop vector
+               do k=1,nVertLevels
+                  ke_vertex(k,iVertex) = 0.5_RKIND * (ux(k)**2 + uy(k)**2 + uz(k)**2)
+               end do
             end do
-         end do
-         !$acc end parallel
+            !$acc end parallel
+
+         else
+
+            !$acc parallel default(present)
+            !$acc loop gang
+            do iVertex=vertexStart,vertexEnd
+               r = 0.25 * invAreaTriangle(iVertex) 
+               !$acc loop vector
+               do k=1,nVertLevels
+
+!                  ke_vertex(k,iVertex) = (  dcEdge(EdgesOnVertex(1,iVertex))*dvEdge(EdgesOnVertex(1,iVertex))*u(k,EdgesOnVertex(1,iVertex))**2  &
+!                                           +dcEdge(EdgesOnVertex(2,iVertex))*dvEdge(EdgesOnVertex(2,iVertex))*u(k,EdgesOnVertex(2,iVertex))**2  &
+!                                           +dcEdge(EdgesOnVertex(3,iVertex))*dvEdge(EdgesOnVertex(3,iVertex))*u(k,EdgesOnVertex(3,iVertex))**2  &
+!                                         ) * r
+
+                  ke_vertex(k,iVertex) = (  ke_edge(k,EdgesOnVertex(1,iVertex))+ke_edge(k,EdgesOnVertex(2,iVertex))+ke_edge(k,EdgesOnVertex(3,iVertex)) )*r
+
+               end do
+            end do
+            !$acc end parallel
+
+         end if
 
 !$OMP BARRIER
 
