@@ -48,12 +48,14 @@ module mpas_atm_halos
 
       ! Local variables
       character(len=StrKIND), pointer :: config_halo_exch_method
+      logical, pointer :: config_edge_midpoint_flux
 
 
       !
       ! Determine from the namelist option config_halo_exch_method which halo exchange method to employ
       !
       call mpas_pool_get_config(domain % blocklist % configs, 'config_halo_exch_method', config_halo_exch_method)
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
 
       if (trim(config_halo_exch_method) == 'mpas_dmpar') then
          call mpas_log_write('')
@@ -128,6 +130,13 @@ module mpas_atm_halos
 
          call mpas_dmpar_exch_group_create(domain, 'dynamics:tend_u')
          call mpas_dmpar_exch_group_add_field(domain, 'dynamics:tend_u', 'tend_u', timeLevel=1, haloLayers=(/1/))
+
+         if (config_edge_midpoint_flux) then
+            call mpas_dmpar_exch_group_create(domain, 'dynamics:edge_fluxes')
+            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:edge_fluxes', 'flux_theta_edge', timeLevel=1, haloLayers=(/2/))
+            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:edge_fluxes', 'flux_w_edge', timeLevel=1, haloLayers=(/2/))
+            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:edge_fluxes', 'ru_midpoint', timeLevel=1, haloLayers=(/2/))
+         end if
 
          call mpas_dmpar_exch_group_create(domain, 'dynamics:rho_pp')
          call mpas_dmpar_exch_group_add_field(domain, 'dynamics:rho_pp', 'rho_pp', timeLevel=1, haloLayers=(/1/))
@@ -252,6 +261,14 @@ module mpas_atm_halos
          call mpas_halo_exch_group_add_field(domain, 'dynamics:tend_u', 'tend_u', timeLevel=1, haloLayers=(/1/))
          call mpas_halo_exch_group_complete(domain, 'dynamics:tend_u')
 
+         if (config_edge_midpoint_flux) then
+            call mpas_halo_exch_group_create(domain, 'dynamics:edge_fluxes')
+            call mpas_halo_exch_group_add_field(domain, 'dynamics:edge_fluxes', 'flux_theta_edge', timeLevel=1, haloLayers=(/2/))
+            call mpas_halo_exch_group_add_field(domain, 'dynamics:edge_fluxes', 'flux_w_edge', timeLevel=1, haloLayers=(/2/))
+            call mpas_halo_exch_group_add_field(domain, 'dynamics:edge_fluxes', 'ru_midpoint', timeLevel=1, haloLayers=(/2/))
+            call mpas_halo_exch_group_complete(domain, 'dynamics:edge_fluxes')
+         end if
+
          call mpas_halo_exch_group_create(domain, 'dynamics:rho_pp')
          call mpas_halo_exch_group_add_field(domain, 'dynamics:rho_pp', 'rho_pp', timeLevel=1, haloLayers=(/1/))
          call mpas_halo_exch_group_complete(domain, 'dynamics:rho_pp')
@@ -347,9 +364,11 @@ module mpas_atm_halos
 
       ! Local variables
       character(len=StrKIND), pointer :: config_halo_exch_method
+      logical, pointer :: config_edge_midpoint_flux
 
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_halo_exch_method', config_halo_exch_method)
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
 
       if (trim(config_halo_exch_method) == 'mpas_dmpar') then
          !
@@ -369,6 +388,9 @@ module mpas_atm_halos
 
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:exner')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:tend_u')
+         if (config_edge_midpoint_flux) then
+            call mpas_dmpar_exch_group_destroy(domain, 'dynamics:edge_fluxes')
+         end if
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:rho_pp')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:rtheta_pp')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:u_123')
@@ -405,6 +427,9 @@ module mpas_atm_halos
 
          call mpas_halo_exch_group_destroy(domain, 'dynamics:exner')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:tend_u')
+         if (config_edge_midpoint_flux) then
+            call mpas_halo_exch_group_destroy(domain, 'dynamics:edge_fluxes')
+         end if
          call mpas_halo_exch_group_destroy(domain, 'dynamics:rho_pp')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:rtheta_pp')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:u_123')

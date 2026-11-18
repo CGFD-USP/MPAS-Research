@@ -37,6 +37,7 @@ module atm_time_integration
    
    use mpas_atm_iau  
    use mpas_atm_dissipation_models
+   use mpas_atm_consistent_operators, only : atm_compute_edge_fluxes, atm_compute_midpoint_fluxes, atm_edge_midpoint_ruavg
 
    ! Provides definition of halo_exchange_routine
 #include "mpas_halo_interface.inc"
@@ -329,6 +330,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), pointer :: weightsOnEdge_perot
       real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
       character (len=StrKIND), pointer :: config_tangential_reconstruction
+      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint
+      real (kind=RKIND), dimension(:), pointer :: coeffs_edge_midpoint_own
+      logical, pointer :: config_edge_midpoint_flux
       real (kind=RKIND), dimension(:), pointer :: latEdge
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: meshScalingDel2
@@ -575,6 +579,13 @@ module atm_time_integration
       if (trim(config_tangential_reconstruction) == 'perot') then
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
          !$acc enter data copyin(weightsOnEdge_perot)
+      end if
+
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      if (config_edge_midpoint_flux) then
+         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint', coeffs_edge_midpoint)
+         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_own', coeffs_edge_midpoint_own)
+         !$acc enter data copyin(coeffs_edge_midpoint, coeffs_edge_midpoint_own)
       end if
 
       MPAS_ACC_TIMER_STOP('mpas_dynamics_init [ACC_data_xfer]')
@@ -1057,6 +1068,9 @@ module atm_time_integration
 
       real (kind=RKIND), dimension(:,:,:), pointer :: lbc_scalars, lbc_tend_scalars
 
+      logical, pointer :: config_edge_midpoint_flux
+      real (kind=RKIND), dimension(:,:), pointer :: ru_midpoint, flux_theta_edge, flux_w_edge, flux_theta_midpoint, flux_w_midpoint
+
       nullify(mesh)
       nullify(state)
       nullify(diag)
@@ -1277,6 +1291,16 @@ module atm_time_integration
       call mpas_pool_get_array(tend_physics, 'rthdynten', rthdynten)
       !$acc enter data copyin(rthdynten)
 
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      if (config_edge_midpoint_flux) then
+         call mpas_pool_get_array(diag, 'ru_midpoint', ru_midpoint)
+         call mpas_pool_get_array(diag, 'flux_theta_edge', flux_theta_edge)
+         call mpas_pool_get_array(diag, 'flux_w_edge', flux_w_edge)
+         call mpas_pool_get_array(diag, 'flux_theta_midpoint', flux_theta_midpoint)
+         call mpas_pool_get_array(diag, 'flux_w_midpoint', flux_w_midpoint)
+         !$acc enter data create(ru_midpoint, flux_theta_edge, flux_w_edge, flux_theta_midpoint, flux_w_midpoint)
+      end if
+
       MPAS_ACC_TIMER_STOP('atm_srk3 [ACC_data_xfer]')
 #endif
 
@@ -1342,6 +1366,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), pointer :: lbc_tend_rtheta_m, lbc_tend_rho_zz, lbc_tend_theta
 
       real (kind=RKIND), dimension(:,:,:), pointer :: lbc_scalars, lbc_tend_scalars
+
+      logical, pointer :: config_edge_midpoint_flux
+      real (kind=RKIND), dimension(:,:), pointer :: ru_midpoint, flux_theta_edge, flux_w_edge, flux_theta_midpoint, flux_w_midpoint
 
       nullify(mesh)
       nullify(state)
@@ -1561,6 +1588,16 @@ module atm_time_integration
 
       call mpas_pool_get_array(tend_physics, 'rthdynten', rthdynten)
       !$acc exit data copyout(rthdynten)
+
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      if (config_edge_midpoint_flux) then
+         call mpas_pool_get_array(diag, 'ru_midpoint', ru_midpoint)
+         call mpas_pool_get_array(diag, 'flux_theta_edge', flux_theta_edge)
+         call mpas_pool_get_array(diag, 'flux_w_edge', flux_w_edge)
+         call mpas_pool_get_array(diag, 'flux_theta_midpoint', flux_theta_midpoint)
+         call mpas_pool_get_array(diag, 'flux_w_midpoint', flux_w_midpoint)
+         !$acc exit data delete(ru_midpoint, flux_theta_edge, flux_w_edge, flux_theta_midpoint, flux_w_midpoint)
+      end if
       MPAS_ACC_TIMER_STOP('atm_srk3 [ACC_data_xfer]')
 #endif
 
@@ -1655,6 +1692,9 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), pointer :: weightsOnEdge_perot
       real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
       character (len=StrKIND), pointer :: config_tangential_reconstruction
+      real (kind=RKIND), dimension(:,:), pointer :: coeffs_edge_midpoint
+      real (kind=RKIND), dimension(:), pointer :: coeffs_edge_midpoint_own
+      logical, pointer :: config_edge_midpoint_flux
       real (kind=RKIND), dimension(:), pointer :: latEdge
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: meshScalingDel2
@@ -1900,6 +1940,13 @@ module atm_time_integration
          call mpas_pool_get_array(mesh, 'weightsOnEdge_perot', weightsOnEdge_perot)
          !$acc exit data delete(weightsOnEdge_perot)
       end if
+
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      if (config_edge_midpoint_flux) then
+         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint', coeffs_edge_midpoint)
+         call mpas_pool_get_array(mesh, 'coeffs_edge_midpoint_own', coeffs_edge_midpoint_own)
+         !$acc exit data delete(coeffs_edge_midpoint, coeffs_edge_midpoint_own)
+      end if
 #endif
 
    end subroutine mpas_atm_dynamics_finalize
@@ -2022,6 +2069,7 @@ module atm_time_integration
       logical, pointer :: config_positive_definite
       logical, pointer :: config_monotonic
       logical, pointer :: config_gpu_aware_mpi
+      logical, pointer :: config_edge_midpoint_flux
       character (len=StrKIND), pointer :: config_microp_scheme
       character (len=StrKIND), pointer :: config_convection_scheme
 
@@ -2046,6 +2094,7 @@ module atm_time_integration
 
       real (kind=RKIND), dimension(:,:), pointer :: rqvdynten, rthdynten, theta_m
       real (kind=RKIND), dimension(:,:), pointer :: pressure_p, rtheta_p, exner, tend_u
+      real (kind=RKIND), dimension(:,:), pointer :: ru_midpoint, flux_theta_edge, flux_w_edge
       real (kind=RKIND), dimension(:,:), pointer :: rho_pp, rtheta_pp, ru_p, rw_p, pv_edge, rho_edge
       real (kind=RKIND) :: theta_local, fac_m
 
@@ -2067,6 +2116,7 @@ module atm_time_integration
       call mpas_pool_get_config(block % configs, 'config_positive_definite', config_positive_definite)
       call mpas_pool_get_config(block % configs, 'config_monotonic', config_monotonic)
       call mpas_pool_get_config(block % configs, 'config_gpu_aware_mpi', config_gpu_aware_mpi)
+      call mpas_pool_get_config(block % configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
       call mpas_pool_get_config(block % configs, 'config_IAU_option', config_IAU_option)
       !  config variables for dynamics-transport splitting, WCS 18 November 2014
       call mpas_pool_get_config(block % configs, 'config_split_dynamics_transport', config_split_dynamics_transport)
@@ -2340,6 +2390,32 @@ module atm_time_integration
               end do
 !$OMP END PARALLEL DO
             end if  
+
+            ! fluxes at the Voronoi edge midpoints of the edges of the owned cells need the edge fluxes on halo layer 2
+            if (config_edge_midpoint_flux) then
+               call mpas_timer_start('atm_compute_edge_fluxes')
+!$OMP PARALLEL DO
+               do thread=1,nThreads
+                  call atm_compute_edge_fluxes(state, diag, mesh, rk_step, edgeThreadStart(thread), edgeThreadEnd(thread))
+               end do
+!$OMP END PARALLEL DO
+               call mpas_timer_stop('atm_compute_edge_fluxes')
+               MPAS_ACC_TIMER_START('atm_srk3: halo_exchanges + ACC_data_xfer')
+               call mpas_pool_get_array(diag, 'ru_midpoint', ru_midpoint)
+               call mpas_pool_get_array(diag, 'flux_theta_edge', flux_theta_edge)
+               call mpas_pool_get_array(diag, 'flux_w_edge', flux_w_edge)
+               !$acc update self(ru_midpoint, flux_theta_edge, flux_w_edge) if (.not. config_gpu_aware_mpi)
+               call exchange_halo_group(domain, 'dynamics:edge_fluxes', config_gpu_aware_mpi)
+               !$acc update device(ru_midpoint, flux_theta_edge, flux_w_edge) if (.not. config_gpu_aware_mpi)
+               MPAS_ACC_TIMER_STOP('atm_srk3: halo_exchanges + ACC_data_xfer')
+               call mpas_timer_start('atm_compute_edge_fluxes')
+!$OMP PARALLEL DO
+               do thread=1,nThreads
+                  call atm_compute_midpoint_fluxes(diag, mesh, edgeThreadStart(thread), edgeThreadEnd(thread))
+               end do
+!$OMP END PARALLEL DO
+               call mpas_timer_stop('atm_compute_edge_fluxes')
+            end if
 
             call mpas_timer_start('atm_compute_dyn_tend')
    
@@ -4355,6 +4431,8 @@ module atm_time_integration
 
       integer, dimension(:), pointer :: bdyMaskCell  ! MPAS_regional addition
 
+      logical, pointer :: config_edge_midpoint_flux, config_scalar_advection, config_split_dynamics_transport
+
       call mpas_pool_get_array(diag, 'wwAvg', wwAvg)
       call mpas_pool_get_array(diag, 'rw_save', rw_save)
       call mpas_pool_get_array(diag, 'rw', rw)
@@ -4421,6 +4499,15 @@ module atm_time_integration
                              bdyMaskCell, &  !  addition for regional_MPAS
                              cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
                              cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
+
+      ! the scalar transport reads ruAvg after every RK stage, or with split transport after the last one
+      call mpas_pool_get_config(configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      call mpas_pool_get_config(configs, 'config_scalar_advection', config_scalar_advection)
+      call mpas_pool_get_config(configs, 'config_split_dynamics_transport', config_split_dynamics_transport)
+      if (config_edge_midpoint_flux .and. config_scalar_advection .and. &
+          (rk_step == 3 .or. .not. config_split_dynamics_transport)) then
+         call atm_edge_midpoint_ruavg(diag, mesh, edgeStart, edgeEnd)
+      end if
 
    end subroutine atm_recover_large_step_variables
 
@@ -6025,6 +6112,9 @@ module atm_time_integration
       logical :: own_edge_weight
       real (kind=RKIND), dimension(:), pointer :: weightOnEdge_perot_own
 
+      logical, pointer :: config_edge_midpoint_flux
+      real (kind=RKIND), dimension(:,:), pointer :: ru_div, flux_theta_midpoint, flux_w_midpoint
+
 
       call mpas_pool_get_config(mesh, 'sphere_radius', r_earth)
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', coef_3rd_order)
@@ -6200,11 +6290,24 @@ module atm_time_integration
       les_model_opt = les_model_from_string(config_les_model)
       les_surface_opt = les_surface_from_string(config_les_surface)
 
+      ! with the midpoint flux, h_divergence (tend_rho and the momentum tendency) is the divergence of ru at the
+      ! Voronoi edge midpoints; without it the arrays of the option are not referenced
+      call mpas_pool_get_config(configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
+      if (config_edge_midpoint_flux) then
+         call mpas_pool_get_array(diag, 'ru_midpoint', ru_div)
+         call mpas_pool_get_array(diag, 'flux_theta_midpoint', flux_theta_midpoint)
+         call mpas_pool_get_array(diag, 'flux_w_midpoint', flux_w_midpoint)
+      else
+         ru_div => ru
+         flux_theta_midpoint => ru
+         flux_w_midpoint => ru
+      end if
+
       call atm_compute_dyn_tend_work(nCells, nEdges, nVertices, nVertLevels, &
          nCellsSolve, nEdgesSolve, vertexDegree, maxEdges, maxEdges2, num_scalars, index_qv, index_qc, moist_start, moist_end, &
          tend_scalars, &
          fEdge, dvEdge, dcEdge, invDcEdge, invDvEdge, invAreaCell, invAreaTriangle, meshScalingDel2, meshScalingDel4, &
-         weightsOnEdge, zgrid, rho_edge, rho_zz, ru, u, v, tend_u, &
+         weightsOnEdge, zgrid, rho_edge, rho_zz, ru, ru_div, u, v, tend_u, &
          divergence, vorticity, ke, pv_edge, theta_m, rw, tend_rho, &
          rt_diabatic_tend, tend_theta, tend_w, w, cqw, rb, rr, pp, pressure_b, zz, zxu, cqu, & 
          h_divergence, bn2, eddy_visc_horz, eddy_visc_vert, index_tke, &
@@ -6223,6 +6326,7 @@ module atm_time_integration
          config_number_rayleigh_damp_u_levels, config_number_cam_damping_levels, &
          config_surface_heat_flux, config_surface_moisture_flux, config_surface_drag_coefficient, &
          rthdynten, ustm, hfx, qfx, own_edge_weight, weightOnEdge_perot_own, &
+         config_edge_midpoint_flux, flux_theta_midpoint, flux_w_midpoint, &
          cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
          cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
 
@@ -6239,7 +6343,7 @@ module atm_time_integration
       nCellsSolve, nEdgesSolve, vertexDegree, maxEdges_dummy, maxEdges2_dummy, num_scalars_dummy, index_qv, index_qc, moist_start, moist_end, &
       tend_scalars, &
       fEdge, dvEdge, dcEdge, invDcEdge, invDvEdge, invAreaCell, invAreaTriangle, meshScalingDel2, meshScalingDel4, &
-      weightsOnEdge, zgrid, rho_edge, rho_zz, ru, u, v, tend_u, &
+      weightsOnEdge, zgrid, rho_edge, rho_zz, ru, ru_div, u, v, tend_u, &
       divergence, vorticity, ke, pv_edge, theta_m, rw, tend_rho, &
       rt_diabatic_tend, tend_theta, tend_w, w, cqw, rb, rr, pp, pressure_b, zz, zxu, cqu, & 
       h_divergence, bn2, eddy_visc_horz, eddy_visc_vert, index_tke, &
@@ -6258,6 +6362,7 @@ module atm_time_integration
       config_number_rayleigh_damp_u_levels, config_number_cam_damping_levels, &
       config_surface_heat_flux, config_surface_moisture_flux, config_surface_drag_coefficient, &
       rthdynten, ustm, hfx, qfx, own_edge_weight, weightOnEdge_perot_own, &
+      edge_midpoint_flux, flux_theta_midpoint, flux_w_midpoint, &
       cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd, &
       cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd)
 
@@ -6289,6 +6394,7 @@ module atm_time_integration
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: rho_edge
       real (kind=RKIND), dimension(nVertLevels,nCells+1) :: rho_zz
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: ru
+      real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: ru_div
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: u
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: v
       real (kind=RKIND), dimension(nVertLevels,nEdges+1) :: tend_u
@@ -6397,6 +6503,9 @@ module atm_time_integration
 
       logical, intent(in) :: own_edge_weight
       real (kind=RKIND), dimension(nEdges+1) :: weightOnEdge_perot_own
+
+      logical, intent(in) :: edge_midpoint_flux
+      real (kind=RKIND), dimension(:,:) :: flux_theta_midpoint, flux_w_midpoint
 
       integer, intent(in) :: cellStart, cellEnd, vertexStart, vertexEnd, edgeStart, edgeEnd
       integer, intent(in) :: cellSolveStart, cellSolveEnd, vertexSolveStart, vertexSolveEnd, edgeSolveStart, edgeSolveEnd
@@ -6563,7 +6672,7 @@ module atm_time_integration
 !DIR$ IVDEP
             !$acc loop vector
             do k=1,nVertLevels
-               h_divergence(k,iCell) = h_divergence(k,iCell) + edge_sign * ru(k,iEdge)
+               h_divergence(k,iCell) = h_divergence(k,iCell) + edge_sign * ru_div(k,iEdge)
             end do
          end do
       end do
@@ -6798,53 +6907,83 @@ module atm_time_integration
       !  horizontal advection for w
       !
 
-      !$acc parallel default(present)
-      !$acc loop gang worker private(ru_edge_w, flux_arr)
-      do iCell=cellSolveStart,cellSolveEnd    ! Technically updating fewer cells than before...
+      if (edge_midpoint_flux) then
 
-         !$acc loop vector
-         do k=1,nVertLevels+1
-            tend_w(k,iCell) = 0.0_RKIND
-         end do
-
-         !$acc loop seq
-         do i=1,nEdgesOnCell(iCell)
-
-            iEdge = edgesOnCell(i,iCell)
-            edge_sign = edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * 0.5
+         ! fluxes per unit length at the Voronoi edge midpoints, from atm_compute_midpoint_fluxes
+         !$acc parallel default(present)
+         !$acc loop gang worker
+         do iCell=cellSolveStart,cellSolveEnd
 
             !$acc loop vector
-            do k=2,nVertLevels
-               ru_edge_w(k) = fzm(k)*ru(k,iEdge) + fzp(k)*ru(k-1,iEdge)
+            do k=1,nVertLevels+1
+               tend_w(k,iCell) = 0.0_RKIND
             end do
-
-            !$acc loop vector
-            do k=1,nVertLevels
-               flux_arr(k) = 0.0_RKIND
-            end do
-
-            ! flux_arr stores the value of w at the cell edge used in the horizontal transport
 
             !$acc loop seq
-            do j=1,nAdvCellsForEdge(iEdge)
-               iAdvCell = advCellsForEdge(j,iEdge)
+            do i=1,nEdgesOnCell(iCell)
+               iEdge = edgesOnCell(i,iCell)
+
+!DIR$ IVDEP
+               !$acc loop vector
+               do k=2,nVertLevels
+                  tend_w(k,iCell) = tend_w(k,iCell) - edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * flux_w_midpoint(k,iEdge)
+               end do
+
+            end do
+         end do
+         !$acc end parallel
+
+      else
+
+         !$acc parallel default(present)
+         !$acc loop gang worker private(ru_edge_w, flux_arr)
+         do iCell=cellSolveStart,cellSolveEnd    ! Technically updating fewer cells than before...
+
+            !$acc loop vector
+            do k=1,nVertLevels+1
+               tend_w(k,iCell) = 0.0_RKIND
+            end do
+
+            !$acc loop seq
+            do i=1,nEdgesOnCell(iCell)
+
+               iEdge = edgesOnCell(i,iCell)
+               edge_sign = edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * 0.5
 
                !$acc loop vector
                do k=2,nVertLevels
-                  scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru_edge_w(k)) * adv_coefs_3rd(j,iEdge)
-                  flux_arr(k) = flux_arr(k) + scalar_weight * w(k,iAdvCell)
+                  ru_edge_w(k) = fzm(k)*ru(k,iEdge) + fzp(k)*ru(k-1,iEdge)
                end do
-            end do
+
+               !$acc loop vector
+               do k=1,nVertLevels
+                  flux_arr(k) = 0.0_RKIND
+               end do
+
+               ! flux_arr stores the value of w at the cell edge used in the horizontal transport
+
+               !$acc loop seq
+               do j=1,nAdvCellsForEdge(iEdge)
+                  iAdvCell = advCellsForEdge(j,iEdge)
+
+                  !$acc loop vector
+                  do k=2,nVertLevels
+                     scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru_edge_w(k)) * adv_coefs_3rd(j,iEdge)
+                     flux_arr(k) = flux_arr(k) + scalar_weight * w(k,iAdvCell)
+                  end do
+               end do
 
 !DIR$ IVDEP
-            !$acc loop vector
-            do k=2,nVertLevels
-               tend_w(k,iCell) = tend_w(k,iCell) - edgesOnCell_sign(i,iCell) * ru_edge_w(k)*flux_arr(k)
-            end do
+               !$acc loop vector
+               do k=2,nVertLevels
+                  tend_w(k,iCell) = tend_w(k,iCell) - edgesOnCell_sign(i,iCell) * ru_edge_w(k)*flux_arr(k)
+               end do
 
+            end do
          end do
-      end do
-      !$acc end parallel
+         !$acc end parallel
+
+      end if
 
 #ifdef CURVATURE
       !$acc parallel default(present)
@@ -6958,48 +7097,80 @@ module atm_time_integration
       !  horizontal advection for theta
       !
 
-      !$acc parallel default(present)
-      !$acc loop gang worker private(flux_arr)
-      do iCell=cellSolveStart,cellSolveEnd    ! Technically updating fewer cells than before...
+      if (edge_midpoint_flux) then
 
-         !$acc loop vector
-         do k=1,nVertLevels
-            tend_theta(k,iCell) = 0.0_RKIND
-         end do
-
-         !$acc loop seq
-         do i=1,nEdgesOnCell(iCell)
-            iEdge = edgesOnCell(i,iCell)
+         ! fluxes per unit length at the Voronoi edge midpoints, from atm_compute_midpoint_fluxes, which include the
+         ! perturbation flux of RK stages 2 and 3
+         !$acc parallel default(present)
+         !$acc loop gang worker
+         do iCell=cellSolveStart,cellSolveEnd
 
             !$acc loop vector
             do k=1,nVertLevels
-               flux_arr(k) = 0.0_RKIND
+               tend_theta(k,iCell) = 0.0_RKIND
             end do
 
             !$acc loop seq
-            do j=1,nAdvCellsForEdge(iEdge)
-               iAdvCell = advCellsForEdge(j,iEdge)
+            do i=1,nEdgesOnCell(iCell)
+               iEdge = edgesOnCell(i,iCell)
+
+!DIR$ IVDEP
+               !$acc loop vector
+               do k=1,nVertLevels
+                  tend_theta(k,iCell) = tend_theta(k,iCell) &
+                                        - edgesOnCell_sign(i,iCell) * dvEdge(iEdge) * flux_theta_midpoint(k,iEdge)
+               end do
+
+            end do
+         end do
+         !$acc end parallel
+
+      else
+
+         !$acc parallel default(present)
+         !$acc loop gang worker private(flux_arr)
+         do iCell=cellSolveStart,cellSolveEnd    ! Technically updating fewer cells than before...
+
+            !$acc loop vector
+            do k=1,nVertLevels
+               tend_theta(k,iCell) = 0.0_RKIND
+            end do
+
+            !$acc loop seq
+            do i=1,nEdgesOnCell(iCell)
+               iEdge = edgesOnCell(i,iCell)
 
                !$acc loop vector
                do k=1,nVertLevels
-                  scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru(k,iEdge))*adv_coefs_3rd(j,iEdge)
-                  flux_arr(k) = flux_arr(k) + scalar_weight* theta_m(k,iAdvCell)
+                  flux_arr(k) = 0.0_RKIND
                end do
-            end do
+
+               !$acc loop seq
+               do j=1,nAdvCellsForEdge(iEdge)
+                  iAdvCell = advCellsForEdge(j,iEdge)
+
+                  !$acc loop vector
+                  do k=1,nVertLevels
+                     scalar_weight = adv_coefs(j,iEdge) + sign(1.0_RKIND,ru(k,iEdge))*adv_coefs_3rd(j,iEdge)
+                     flux_arr(k) = flux_arr(k) + scalar_weight* theta_m(k,iAdvCell)
+                  end do
+               end do
 
 !DIR$ IVDEP
-            !$acc loop vector
-            do k=1,nVertLevels
-               tend_theta(k,iCell) = tend_theta(k,iCell) - edgesOnCell_sign(i,iCell) * ru(k,iEdge) * flux_arr(k)
-            end do
+               !$acc loop vector
+               do k=1,nVertLevels
+                  tend_theta(k,iCell) = tend_theta(k,iCell) - edgesOnCell_sign(i,iCell) * ru(k,iEdge) * flux_arr(k)
+               end do
 
+            end do
          end do
-      end do
-      !$acc end parallel
+         !$acc end parallel
+
+      end if
 
 !  addition to pick up perturbation flux for rtheta_pp equation
 
-      if(rk_step > 1) then
+      if(rk_step > 1 .and. .not. edge_midpoint_flux) then
 
         !$acc parallel default(present)
         !$acc loop gang worker

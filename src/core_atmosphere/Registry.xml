@@ -286,6 +286,11 @@
                      description="Tangential velocity of an edge in the nonlinear Coriolis term and in the diagnosed v: from weightsOnEdge (trsk), or as the mean of the Perot velocities of its two cells along the edge, including the weight of the edge itself (perot)"
                      possible_values="`trsk' or `perot'"/>
 
+                <nml_option name="config_edge_midpoint_flux" type="logical" default_value="false" in_defaults="false"
+                     units="-"
+                     description="Whether the horizontal fluxes of mass, theta_m and w in the large-step divergences (the mass tendency, the divergence term of the momentum tendency and the advection of theta_m and w) and the mass flux of the scalar transport are taken at the midpoint of the Voronoi edge, from the fluxes at the edge points of the edge and its edgesOnEdge, instead of at the edge point"
+                     possible_values=".true. or .false."/>
+
                 <nml_option name="config_h_ScaleWithMesh" type="logical" default_value="true" in_defaults="false"
                      units="-"
                      description="Scale eddy viscosities with mesh-density function for horizontal diffusion"
@@ -503,6 +508,9 @@
                 <package name="perot_tangential"
                          description="Tangential velocity from the Perot reconstructions of the cells"
                          active_when="trim(config_tangential_reconstruction) == 'perot'"/>
+                <package name="edge_midpoint_flux"
+                         description="Edge fluxes at the Voronoi edge midpoints"
+                         active_when="config_edge_midpoint_flux"/>
                 <package name="sfclayer"
                          description="Variables and options associated with surface layer physics"
                          active_when="(trim(config_physics_suite) /= 'none' .and. trim(config_sfclayer_scheme) == 'suite') .or.  any(trim(config_sfclayer_scheme) == [ character(len=StrKind) :: 'sf_monin_obukhov', 'sf_monin_obukhov_rev', 'sf_mynn' ])"/>
@@ -1453,6 +1461,14 @@
                 <var name="weightOnEdge_perot_own" type="real" dimensions="nEdges" units="unitless"
                      description="Weight of the edge itself in its tangential velocity from the Perot reconstructions of the cells"/>
 
+                <var name="coeffs_edge_midpoint" type="real" dimensions="maxEdges2 nEdges" units="unitless"
+                     description="Weights of the fluxes at the edge points of edgesOnEdge in the flux at the Voronoi edge midpoint"
+                     packages="edge_midpoint_flux"/>
+
+                <var name="coeffs_edge_midpoint_own" type="real" dimensions="nEdges" units="unitless"
+                     description="Weight of the flux at the edge point of an edge in its flux at the Voronoi edge midpoint"
+                     packages="edge_midpoint_flux"/>
+
                 <var name="dvEdge" type="real" dimensions="nEdges" units="m"
                      description="Spherical distance between vertex endpoints of an edge"/>
 
@@ -1965,6 +1981,26 @@
 
                 <var name="ruAvg" type="real" dimensions="nVertLevels nEdges Time" units="kg m^{-2} s^{-1}"
                      description="time-averaged rho*u/zz used in scalar transport"/>
+
+                <var name="ru_midpoint" type="real" dimensions="nVertLevels nEdges Time" units="kg m^{-2} s^{-1}"
+                     description="rho*u/zz at the Voronoi edge midpoint (config_edge_midpoint_flux)"
+                     packages="edge_midpoint_flux"/>
+
+                <var name="flux_theta_edge" type="real" dimensions="nVertLevels nEdges Time" units="kg K m^{-2} s^{-1}"
+                     description="Horizontal flux of theta_m per unit length at the edge point, including the perturbation flux of RK stages 2 and 3 (config_edge_midpoint_flux)"
+                     packages="edge_midpoint_flux"/>
+
+                <var name="flux_w_edge" type="real" dimensions="nVertLevelsP1 nEdges Time" units="kg m^{-1} s^{-2}"
+                     description="Horizontal flux of w per unit length at the edge point (config_edge_midpoint_flux)"
+                     packages="edge_midpoint_flux"/>
+
+                <var name="flux_theta_midpoint" type="real" dimensions="nVertLevels nEdges Time" units="kg K m^{-2} s^{-1}"
+                     description="Horizontal flux of theta_m per unit length at the Voronoi edge midpoint (config_edge_midpoint_flux)"
+                     packages="edge_midpoint_flux"/>
+
+                <var name="flux_w_midpoint" type="real" dimensions="nVertLevelsP1 nEdges Time" units="kg m^{-1} s^{-2}"
+                     description="Horizontal flux of w per unit length at the Voronoi edge midpoint (config_edge_midpoint_flux)"
+                     packages="edge_midpoint_flux"/>
 
                 <var name="wwAvg" type="real" dimensions="nVertLevelsP1 nCells Time" units="kg m^{-2} s^{-1}"
                      description="time-averaged rho*omega/zz used in scalar transport"/>
