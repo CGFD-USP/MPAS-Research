@@ -286,6 +286,11 @@
                      description="Kinetic energy at cells and vertices: from the squares of the edge velocities (trsk), or from the velocity vector reconstructed from the normal velocities of the edges with the Perot weights (perot) or a second-order least-squares fit (lsq2). With perot and lsq2 the same reconstruction gives the cell velocity (uReconstruct*)."
                      possible_values="`trsk', `perot' or `lsq2'"/>
 
+                <nml_option name="config_cell_wind_reconstruction" type="character" default_value="ke" in_defaults="false"
+                     units="-"
+                     description="Cell velocity (uReconstruct*) of the physics and the output: from the reconstruction of config_ke_reconstruction (ke), i.e. the radial basis functions of mpas_init_reconstruct with config_ke_reconstruction = trsk, or from the Perot weights (perot) or the second-order least-squares fit (lsq2). A value other than ke needs config_ke_reconstruction = trsk or the same value."
+                     possible_values="`ke', `perot' or `lsq2'"/>
+
                 <nml_option name="config_tangential_reconstruction" type="character" default_value="trsk" in_defaults="false"
                      units="-"
                      description="Tangential velocity of an edge in the nonlinear Coriolis term and in the diagnosed v: from weightsOnEdge (trsk), or as the mean of the Perot velocities of its two cells along the edge, including the weight of the edge itself (perot)"

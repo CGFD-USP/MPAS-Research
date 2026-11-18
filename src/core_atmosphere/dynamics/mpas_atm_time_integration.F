@@ -129,8 +129,10 @@ module atm_time_integration
    !>  2) 0 <= config_ke_cell_weight <= 1
    !>  3) config_ke_reconstruction is 'trsk', 'perot' or 'lsq2'
    !>  4) config_tangential_reconstruction is 'trsk' or 'perot'
+   !>  5) config_cell_wind_reconstruction is 'ke', or 'perot' or 'lsq2' with
+   !>     config_ke_reconstruction 'trsk' or the same value
    !>
-   !>  A failed check 1) only prints a warning. A failed check 2), 3) or 4)
+   !>  A failed check 1) only prints a warning. A failed check 2), 3), 4) or 5)
    !>  prints an error and returns a non-zero value in the ierr argument.
    !
    !-----------------------------------------------------------------------
@@ -152,6 +154,7 @@ module atm_time_integration
        real (kind=RKIND), pointer :: config_ke_cell_weight
        character (len=StrKIND), pointer :: config_ke_reconstruction
        character (len=StrKIND), pointer :: config_tangential_reconstruction
+       character (len=StrKIND), pointer :: config_cell_wind_reconstruction
 
 
        ierr = 0
@@ -233,6 +236,22 @@ module atm_time_integration
        if (trim(config_tangential_reconstruction) /= 'trsk' .and. trim(config_tangential_reconstruction) /= 'perot') then
            call mpas_log_write('config_tangential_reconstruction = '''//trim(config_tangential_reconstruction)// &
                                ''' is not supported, use ''trsk'' or ''perot''.', messageType=MPAS_LOG_ERR)
+           ierr = 1
+       end if
+
+       nullify(config_cell_wind_reconstruction)
+       call mpas_pool_get_config(blocklist % configs, 'config_cell_wind_reconstruction', config_cell_wind_reconstruction)
+
+       if (trim(config_cell_wind_reconstruction) /= 'ke' .and. trim(config_cell_wind_reconstruction) /= 'perot' .and. &
+           trim(config_cell_wind_reconstruction) /= 'lsq2') then
+           call mpas_log_write('config_cell_wind_reconstruction = '''//trim(config_cell_wind_reconstruction)// &
+                               ''' is not supported, use ''ke'', ''perot'' or ''lsq2''.', messageType=MPAS_LOG_ERR)
+           ierr = 1
+       else if (trim(config_cell_wind_reconstruction) /= 'ke' .and. trim(config_ke_reconstruction) /= 'trsk' .and. &
+                trim(config_cell_wind_reconstruction) /= trim(config_ke_reconstruction)) then
+           call mpas_log_write('config_cell_wind_reconstruction = '''//trim(config_cell_wind_reconstruction)// &
+                               ''' needs config_ke_reconstruction = ''trsk'' or '''// &
+                               trim(config_cell_wind_reconstruction)//'''.', messageType=MPAS_LOG_ERR)
            ierr = 1
        end if
 

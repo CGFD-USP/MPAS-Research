@@ -16,6 +16,9 @@
 !>     by a least-squares fit of a linear vector field ('lsq2'). The cell weights
 !>     replace the coefficients coeffs_reconstruct of mpas_vector_reconstruction, the
 !>     vertex weights go to coeffs_reconstruct_vertex.
+!>   - config_cell_wind_reconstruction = 'perot' or 'lsq2' with config_ke_reconstruction
+!>     = 'trsk': the same cell weights in coeffs_reconstruct, so only the cell velocity
+!>     of the physics and the output changes.
 !>   - config_tangential_reconstruction = 'perot': the tangential velocity of an
 !>     edge as the mean of the Perot velocities of its two cells along the edge,
 !>     with weights weightsOnEdge_perot for its edgesOnEdge and
@@ -84,7 +87,8 @@ module mpas_atm_consistent_operators
       type (mpas_pool_type), intent(inout) :: mesh
       type (mpas_pool_type), intent(in) :: configs
 
-      character (len=StrKIND), pointer :: config_ke_reconstruction, config_tangential_reconstruction
+      character (len=StrKIND), pointer :: config_ke_reconstruction, config_tangential_reconstruction, &
+                                          config_cell_wind_reconstruction
       logical, pointer :: config_edge_midpoint_flux
       logical, pointer :: on_a_sphere
       real (kind=RKIND), pointer :: sphere_radius
@@ -104,23 +108,27 @@ module mpas_atm_consistent_operators
       real (kind=R8KIND), dimension(:,:), allocatable :: wc, wv
       real (kind=R8KIND), dimension(:), allocatable :: we
       real (kind=R8KIND) :: r, wown
-      logical :: ke_perot, ke_lsq2, tangential_perot
+      logical :: ke_perot, ke_lsq2, cell_perot, cell_lsq2, tangential_perot
       integer :: iCell, iEdge, iVertex, n, c1, c2
 
       call mpas_pool_get_config(configs, 'config_ke_reconstruction', config_ke_reconstruction)
+      call mpas_pool_get_config(configs, 'config_cell_wind_reconstruction', config_cell_wind_reconstruction)
       call mpas_pool_get_config(configs, 'config_tangential_reconstruction', config_tangential_reconstruction)
       call mpas_pool_get_config(configs, 'config_edge_midpoint_flux', config_edge_midpoint_flux)
       ke_perot = trim(config_ke_reconstruction) == 'perot'
       ke_lsq2 = trim(config_ke_reconstruction) == 'lsq2'
+      ! mpas_atm_dynamics_checks allows at most one of the two
+      cell_perot = ke_perot .or. trim(config_cell_wind_reconstruction) == 'perot'
+      cell_lsq2 = ke_lsq2 .or. trim(config_cell_wind_reconstruction) == 'lsq2'
       tangential_perot = trim(config_tangential_reconstruction) == 'perot'
-      if (.not. (ke_perot .or. ke_lsq2 .or. tangential_perot .or. config_edge_midpoint_flux)) return
+      if (.not. (cell_perot .or. cell_lsq2 .or. tangential_perot .or. config_edge_midpoint_flux)) return
 
       call mpas_timer_start('atm_consistent_operators_init')
 
       call mpas_pool_get_config(mesh, 'on_a_sphere', on_a_sphere)
       if (.not. on_a_sphere) then
-         call mpas_log_write('config_ke_reconstruction, config_tangential_reconstruction and config_edge_midpoint_flux'// &
-                             ' need a spherical mesh', messageType=MPAS_LOG_CRIT)
+         call mpas_log_write('config_ke_reconstruction, config_cell_wind_reconstruction, config_tangential_reconstruction'// &
+                             ' and config_edge_midpoint_flux need a spherical mesh', messageType=MPAS_LOG_CRIT)
       end if
       call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
 
@@ -177,7 +185,7 @@ module mpas_atm_consistent_operators
          perot_ok(iCell) = all(edgesOnCell(1:n,iCell) >= 1 .and. edgesOnCell(1:n,iCell) <= nEdges) .and. &
                            all(verticesOnCell(1:n,iCell) >= 1 .and. verticesOnCell(1:n,iCell) <= nVertices)
       end do
-      if (ke_perot .or. tangential_perot) then
+      if (cell_perot .or. tangential_perot) then
          allocate(wperot(3,maxEdges,nCells))
          do iCell = 1, nCells
             if (perot_ok(iCell)) then
@@ -187,32 +195,41 @@ module mpas_atm_consistent_operators
          end do
       end if
 
-      if (ke_perot .or. ke_lsq2) then
+      if (cell_perot .or. cell_lsq2) then
          call mpas_pool_get_array(mesh, 'coeffs_reconstruct', coeffs_reconstruct)
-         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
 
-         allocate(cell_ok(nCells), vertex_ok(nVertices))
+         allocate(cell_ok(nCells), wc(3,maxEdges))
          do iCell = 1, nCells
             cell_ok(iCell) = perot_ok(iCell)
-            if (cell_ok(iCell) .and. ke_lsq2) cell_ok(iCell) = all(edge_ok(edgesOnCell(1:nEdgesOnCell(iCell),iCell)))
-         end do
-         do iVertex = 1, nVertices
-            vertex_ok(iVertex) = all(edgesOnVertex(:,iVertex) >= 1 .and. edgesOnVertex(:,iVertex) <= nEdges) .and. &
-                                 all(cellsOnVertex(:,iVertex) >= 1 .and. cellsOnVertex(:,iVertex) <= nCells)
-            if (vertex_ok(iVertex)) vertex_ok(iVertex) = all(edge_ok(edgesOnVertex(:,iVertex)))
+            if (cell_ok(iCell) .and. cell_lsq2) cell_ok(iCell) = all(edge_ok(edgesOnCell(1:nEdgesOnCell(iCell),iCell)))
          end do
 
-         allocate(wc(3,maxEdges), wv(3,vertexDegree))
          do iCell = 1, nCells
             if (.not. cell_ok(iCell)) cycle
             n = nEdgesOnCell(iCell)
-            if (ke_perot) then
+            if (cell_perot) then
                wc(:,1:n) = wperot(:,1:n,iCell)
             else
                call lsq2_vector_weights(xc(:,iCell), n, edgesOnCell(:,iCell), xt, ne, wc)
             end if
             coeffs_reconstruct(:,:,iCell) = 0.0_RKIND
             coeffs_reconstruct(:,1:n,iCell) = real(wc(:,1:n), RKIND)
+         end do
+
+         if (.not. (ke_perot .or. ke_lsq2)) then
+            call mpas_log_write('Cell velocity from the '//trim(config_cell_wind_reconstruction)// &
+                                ' reconstruction; owned cells without it: $i', intArgs=(/count(.not. cell_ok(1:nCellsSolve))/))
+         end if
+      end if
+
+      if (ke_perot .or. ke_lsq2) then
+         call mpas_pool_get_array(mesh, 'coeffs_reconstruct_vertex', coeffs_reconstruct_vertex)
+
+         allocate(vertex_ok(nVertices), wv(3,vertexDegree))
+         do iVertex = 1, nVertices
+            vertex_ok(iVertex) = all(edgesOnVertex(:,iVertex) >= 1 .and. edgesOnVertex(:,iVertex) <= nEdges) .and. &
+                                 all(cellsOnVertex(:,iVertex) >= 1 .and. cellsOnVertex(:,iVertex) <= nCells)
+            if (vertex_ok(iVertex)) vertex_ok(iVertex) = all(edge_ok(edgesOnVertex(:,iVertex)))
          end do
 
          do iVertex = 1, nVertices
@@ -230,7 +247,10 @@ module mpas_atm_consistent_operators
          call mpas_log_write('Kinetic energy and cell velocity from the '//trim(config_ke_reconstruction)// &
                              ' reconstruction; owned cells and vertices without it: $i $i', &
                              intArgs=(/count(.not. cell_ok(1:nCellsSolve)), count(.not. vertex_ok(1:nVerticesSolve))/))
-         deallocate(cell_ok, vertex_ok, wc, wv)
+         deallocate(vertex_ok, wv)
+      end if
+      if (cell_perot .or. cell_lsq2) then
+         deallocate(cell_ok, wc)
       end if
 
       if (tangential_perot) then
