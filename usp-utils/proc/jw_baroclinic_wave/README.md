@@ -11,7 +11,7 @@ length proportional to the cell spacing.
 | file | does |
 |---|---|
 | `common.sh` | settings: build, meshes, spacing and time step of a mesh, and the list of configurations |
-| `run_jw.sh <root> <mesh>[-ncar] <wave\|steady\|wave-flat\|steady-flat\|wave-rebal\|steady-rebal\|wave-exactavg\|steady-exactavg> <levels> <config> <ranks> <duration>` | makes the initial state once per mesh, case and level count (`init/`), then sets up and runs one configuration (`<config>_np<ranks>/`) |
+| `run_jw.sh <root> <mesh>[-ncar] <wave\|steady\|wave-point\|steady-point> <levels> <config> <ranks> <duration>` | makes the initial state once per mesh, case and level count (`init/`), then sets up and runs one configuration (`<config>_np<ranks>/`) |
 | `check_runs.py <root>` | status, cost, whether the model log lists the selected schemes, final ranges, and differences of cell fields between runs (each configuration against `trsk`, 1 rank against more ranks, the NCAR grid against the regenerated one, the steady state against its initial state) |
 | `smoke.sh [root]` | smoke test on the 480 km mesh, 1 day per run, about 1 min on 4 cores |
 
@@ -43,29 +43,16 @@ MPAS writes once the file is complete), so a call after an interrupted segment, 
 requeued after a node failure, repeats that segment. A call on a complete run does nothing, and a
 call on a failed run stops. Segmented and interrupted runs give the same bits as one continuous run.
 
-Point-valued initial wind: `JW_INIT_NHYD_EXTRA="    config_point_wind = true"` adds the init option to the
-`&nhyd_model` of `namelist.init_atmosphere`, so the normal wind of the init cases 1 to 3, 11 and 17 to 25 is the analytic
-value at `xEdge` instead of the mean over the dual edge. The `steady-exactavg` and `wave-exactavg` cases with it are the
-paper's JW runs.
+Point-valued JW: the cases `steady-point` and `wave-point` (`config_init_case = 21` and `22`, and 23 for the
+normal-mode perturbation) keep the JW terrain and surface pressure of cases 1 and 2, balance the initial wind against the
+pressure gradient that the model evaluates (along-level gradient over `zz` plus the `zxu` term with the hydrostatic
+`dp'/dz`) instead of the conservative form of MPAS-A, on a 2D latitude grid refined to the mesh (at most 1/8 of the
+shortest cell distance), and set the normal wind to its point value at `xEdge`, interpolated from the 2D wind with a cubic
+Lagrange polynomial. They are the paper's JW runs. The cases `steady` and `wave` are those of MPAS-A, unchanged.
 
 Other test cases run through `run_jw.sh` with environment variables for the init case, the time
 step, the horizontal mixing, the divergence damping and the output fields (its header), as
 [`../zonal_steady`](../zonal_steady) does. Unset, they keep the settings above.
-
-Flat surface (opt-in): the cases `steady-flat` and `wave-flat` (`config_init_case = 17` and `18`, and 19 for the
-normal-mode perturbation) use the JW fields over a flat surface at z = 0, with the surface pressure
-p0 eta_s(lat) at which the JW geopotential vanishes, instead of the JW terrain. The existing cases
-`steady` and `wave` are unchanged. The flat-surface results are not directly comparable with published JW
-and HIWPP numbers, since the base state, the surface pressure and the reference solution differ.
-
-Rebalanced wind (opt-in): the cases `steady-rebal` and `wave-rebal` (`config_init_case = 20` and `21`, and 22 for the
-normal-mode perturbation) keep the JW terrain and surface pressure, and balance the initial wind against the
-pressure gradient that the model evaluates (along-level gradient over `zz` plus the `zxu` term with the hydrostatic
-`dp'/dz`), instead of the conservative form of the earlier releases. The existing cases `steady` and `wave` are unchanged.
-The cases `steady-exactavg` and `wave-exactavg` (`config_init_case = 23` and `24`, and 25 for the normal-mode perturbation)
-are the rebalanced ones with the exact mean of the piecewise-linear 2D wind over the latitudes of the dual edge (the
-rebalanced cases weight the first partial interval wrongly, an error of the edge wind that grows as 1/dx down to the
-spacing of the 2D grid) and with the 2D latitude grid refined to the mesh (at most 1/8 of the shortest cell distance).
 
 The MPI launch is `usp-utils/machines/mpirun.sh`: on one node, or across the nodes of a PBS job when
 the ranks need more than one node.

@@ -16,22 +16,20 @@
 # a call on a complete run does nothing, and a call after an interrupted
 # segment repeats it.
 # Each folder gets RUN_INFO, whose "rerun" lines repeat the run by hand.
-# Flat surface: the cases wave-flat and steady-flat (init cases 18 and 17) use the JW fields over a
-# flat surface (surface pressure p0 eta_s(lat)), not directly comparable with published JW results.
-# Rebalanced wind: the cases wave-rebal and steady-rebal (init cases 21 and 20) are the JW cases with the
-# initial wind balanced against the pressure gradient of the model. The cases wave-exactavg and steady-exactavg
-# (init cases 24 and 23) add the exact edge average of the 2D wind and a 2D latitude grid refined to the mesh.
-# Other test cases (e.g. ../zonal_steady): a <case> other than wave and steady
+# Point values: the cases wave-point and steady-point (init cases 22 and 21) set the normal wind to its
+# point value at xEdge, from the 2D wind balanced against the pressure gradient of the model on a latitude
+# grid refined to the mesh.
+# Other test cases (e.g. ../zonal_steady): a <case> other than these
 # takes its config_init_case from $JW_INIT_CASE, and $JW_INIT_EXTRA (namelist
-# groups) is appended to namelist.init_atmosphere, and $JW_INIT_NHYD_EXTRA (namelist lines, e.g.
-# config_point_wind = true) to its &nhyd_model. $JW_DT (s) replaces the time
+# groups) is appended to namelist.init_atmosphere, and $JW_INIT_NHYD_EXTRA (namelist
+# lines) to its &nhyd_model. $JW_DT (s) replaces the time
 # step, $JW_HORIZ_MIXING the horizontal mixing (default 2d_smagorinsky),
 # $JW_SMDIV the divergence damping (default 0.1), and $JW_HISTORY_FIELDS and
 # $JW_DIAG_FIELDS the fields of the two output streams. $JW_NHYD_EXTRA (namelist
 # lines) is appended to &nhyd_model, e.g. for options of the dynamics, and $JW_RUN_TAG (e.g. +ep) is
 # added to the name of the run folder, so that runs of one configuration with different options
 # share the initial state.
-# Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady|wave-flat|steady-flat|wave-rebal|steady-rebal|wave-exactavg|steady-exactavg> <levels> <config> <ranks> <duration>
+# Usage: bash run_jw.sh <root> <mesh>[-ncar] <wave|steady|wave-point|steady-point> <levels> <config> <ranks> <duration>
 #   e.g. bash run_jw.sh $MPAS_DATA_ROOT/jw x1.40962 wave 60 consistent 48 15_00:00:00
 set -eu
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -46,14 +44,10 @@ options=$(sed 's/^/    /' <<< "$options")
 case $case in
   wave) init_case=2 ;;
   steady) init_case=1 ;;
-  wave-flat) init_case=18 ;;
-  steady-flat) init_case=17 ;;
-  wave-rebal) init_case=21 ;;
-  steady-rebal) init_case=20 ;;
-  wave-exactavg) init_case=24 ;;
-  steady-exactavg) init_case=23 ;;
+  wave-point) init_case=22 ;;
+  steady-point) init_case=21 ;;
   *)
-    [ -n "${JW_INIT_CASE:-}" ] || { echo "case is wave or steady, or set JW_INIT_CASE for $case" >&2; exit 1; }
+    [ -n "${JW_INIT_CASE:-}" ] || { echo "case is wave, steady, wave-point or steady-point, or set JW_INIT_CASE for $case" >&2; exit 1; }
     init_case=$JW_INIT_CASE
     ;;
 esac

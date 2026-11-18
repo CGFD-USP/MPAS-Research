@@ -41,10 +41,11 @@ T0 = 300 K, p_eq = 1000 hPa (surface pressure at the equator, 805 hPa at the pol
   (the atmosphere at rest with p_eq at the surface) is in the same discrete balance, so p(k) / p(1)
   is the same in every column and the vertical truncation error does not enter the horizontal
   pressure gradient. The pressure differs from the exact one by that vertical error only.
-- Normal velocity at an edge: the mean of the normal velocity over the dual edge, i.e. the
-  difference of the stream function -a u0 sin(lat) between its vertices over `dvEdge`. The
-  discrete divergence of u is therefore zero. It differs from the point value at the edge by a
-  second-order amount (2.6e-3 u0 at 480 km), which `check_zonal.py` prints.
+- Normal velocity at an edge: the point value at `xEdge`, u0 cos(lat) times the zonal component
+  of the edge normal. It differs from the mean of the normal velocity over the dual edge (the
+  difference of the stream function -a u0 sin(lat) between its vertices over `dvEdge`, whose
+  discrete divergence is zero) by a second-order amount (2.6e-3 u0 at 480 km), which
+  `check_zonal.py` prints.
 - w = 0, f = 2 Omega sin(lat) at edges and vertices, flat surface (zeta = z).
 
 ## Use
@@ -58,9 +59,6 @@ bash usp-utils/proc/zonal_steady/run_zonal.sh $MPAS_DATA_ROOT/zonal x1.40962 30 
 bash usp-utils/proc/zonal_steady/run_zonal.sh $MPAS_DATA_ROOT/zonal x1.40962 30 trsk 32 10_00:00:00 nodiss
 bash usp-utils/install/container/run.sh python3 usp-utils/proc/zonal_steady/check_zonal.py $MPAS_DATA_ROOT/zonal
 ```
-
-With `JW_INIT_NHYD_EXTRA="    config_point_wind = true"` exported, the normal wind is the point value at `xEdge`
-instead of the dual-edge mean described above (the paper's case 11 runs).
 
 Runs of `run_jw.sh` (segments, chains of jobs, `submit.sh` on a cluster) work the same way.
 

@@ -21,10 +21,10 @@ The build is made from a clean copy of the commit and records the commit and che
 
 ## Namelist options
 
-All options are in `&nhyd_model` of `namelist.atmosphere` (the init option in that of `namelist.init_atmosphere`), and their
-defaults keep the operators of MPAS-A 8.4.2. Two corrections of MPAS-A are always on: the `zz` factor of the horizontal
-pressure gradient in the acoustic steps, lost in MPAS-A 5.1, and the Smagorinsky deformation coefficients of each edge on
-meshes not ordered as NCAR's (bitwise unchanged on NCAR meshes).
+All options are in `&nhyd_model` of `namelist.atmosphere`, and their defaults keep the operators of MPAS-A 8.4.2. Two
+corrections of MPAS-A are always on: the `zz` factor of the horizontal pressure gradient in the acoustic steps, lost in
+MPAS-A 5.1, and the Smagorinsky deformation coefficients of each edge on meshes not ordered as NCAR's (unchanged up to
+round-off on NCAR meshes).
 
 | option | default | meaning |
 |---|---|---|
@@ -33,7 +33,6 @@ meshes not ordered as NCAR's (bitwise unchanged on NCAR meshes).
 | `config_cell_wind_reconstruction` | `'ke'` | cell wind `uReconstruct*` of the physics and the output: from the reconstruction of `config_ke_reconstruction` (`'ke'`, the radial basis functions of MPAS with `'trsk'`), or from the Perot weights (`'perot'`) or the least-squares fit (`'lsq2'`). A value other than `'ke'` needs `config_ke_reconstruction = 'trsk'` or the same value, so with `'trsk'` it changes only the cell wind |
 | `config_ke_cell_weight` | `0.625` | weight of the cell estimate in the blend with the vertex estimates, which get one minus this weight |
 | `config_edge_midpoint_flux` | `.false.` | fluxes of mass, `theta_m` and `w` in the large-step divergences, and the mass flux of the scalar transport, at the midpoint of the Voronoi edge instead of the edge point |
-| `config_point_wind` (init) | `.false.` | normal wind of the idealized init cases 1 to 3, 11 and 17 to 25 as the point value at `xEdge` instead of the dual-edge mean |
 
 The model log lists the reconstructions in use, for example `Tangential velocity from the Perot velocities of the cells`.
 The reconstructions need a spherical mesh.
@@ -52,8 +51,7 @@ A scheme is named by its choice for the tangential wind T, the kinetic energy KE
 | T(Cons)-KE(Cons)-F(Cons) | `'perot'` | `'perot'` | true | `consistent-vke+em` |
 | T(Cons)-KE(LSq2)-F(Cons) | `'perot'` | `'lsq2'` | true | `lsq2-vke+em` |
 
-The paper's idealized tests also set `config_point_wind = .true.`. The
-harness maps a name to its options in one place, [`proc/schemes.sh`](../proc/schemes.sh). Names without `-vke` or `-newke`
+The harness maps a name to its options in one place, [`proc/schemes.sh`](../proc/schemes.sh). Names without `-vke` or `-newke`
 (`consistent`, `lsq2`) use the cell kinetic energy alone, `config_ke_cell_weight = 1.0`. The control `trsk-cellvel` is MPAS
 with the Perot cell wind, `config_cell_wind_reconstruction = 'perot'`, which isolates the effect of the cell wind on the
 physics in the real cases.
@@ -65,16 +63,18 @@ make the initial state once per case, and are restartable. The mesh is a regener
 
 ```bash
 bash usp-utils/pre_proc/grid_creation_scripts/prepare_ncar_mesh.sh x1.2562 4    # mesh and a 4-rank partition
-export JW_INIT_NHYD_EXTRA="    config_point_wind = true"                      # point-valued initial wind
 export JW_NHYD_EXTRA="    config_smdiv = 0.1"                                    # other options of &nhyd_model
 J=usp-utils/proc/jw_baroclinic_wave/run_jw.sh
-bash $J $MPAS_DATA_ROOT/jw x1.2562 steady-exactavg 30 consistent-vke 4 9_00:00:00   # JW steady state, 30 levels, 4 ranks
-bash $J $MPAS_DATA_ROOT/jw x1.2562 wave-exactavg 30 consistent-vke+em 4 9_00:00:00  # JW baroclinic wave with F(Cons)
+bash $J $MPAS_DATA_ROOT/jw x1.2562 steady-point 30 consistent-vke 4 9_00:00:00   # JW steady state, 30 levels, 4 ranks
+bash $J $MPAS_DATA_ROOT/jw x1.2562 wave-point 30 consistent-vke+em 4 9_00:00:00  # JW baroclinic wave with F(Cons)
 bash usp-utils/proc/zonal_steady/run_zonal.sh $MPAS_DATA_ROOT/zonal x1.2562 30 trsk 4 10_00:00:00   # solid-body case 11
 ```
 
 The arguments are the output root, the mesh, the case, the number of levels, the scheme (harness name, optionally with `+em`),
-the ranks and the duration. The cases `steady-exactavg` and `wave-exactavg` (init cases 23 and 24) are the ones of the paper.
+the ranks and the duration. The cases `steady-point` and `wave-point` (init cases 21 and 22) are the ones of the paper: the JW
+init cases 1 and 2 of MPAS-A, with the wind balanced against the pressure gradient of the model on a latitude grid refined to
+the mesh, and the normal wind set to its point value at `xEdge` (init case 23 does the same for case 3). The solid-body case 11
+also sets point values.
 The time step is proportional to the mesh spacing, 450 s at 120 km. `JW_HISTORY_INTERVAL`, `JW_HISTORY_FIELDS`, `JW_SEGMENT`
 and the other variables are in the headers of `run_jw.sh` and `run_zonal.sh`. A cluster job runs the same command through
 `bash usp-utils/machines/submit.sh <cores> <log> <command>`. The summary of finished runs:

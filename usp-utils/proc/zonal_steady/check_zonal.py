@@ -4,13 +4,13 @@ Writes <first root>/errors.csv, one line per run, output time and field, with th
 l2 (weighted rms) and maximum errors of u (normal velocity at edges), w, theta,
 rho, pressure and the surface pressure against two references:
   init   the initial state of the run (the discrete steady state), and
-  exact  the analytic solution sampled as init case 11 samples it (u: mean
-         normal velocity over the dual edge, cell fields: point values at the
+  exact  the analytic solution sampled as init case 11 samples it (u: point
+         normal velocity at the edge, cell fields: point values at the
          cell centre and the layer mid height).
 Prints, per initial state, the residual of the discrete hydrostatic balance and
-the difference between u and the point normal velocity at the edge, and per
-case, configuration and level count the errors at one time against resolution
-with the observed orders between successive meshes.
+the difference between the mean normal velocity over the dual edge and the point
+value, and per case, configuration and level count the errors at one time
+against resolution with the observed orders between successive meshes.
 With --rate the table gives the errors divided by the elapsed time (per second),
 e.g. the initial tendency after one short step (run_zonal.sh step=<s>).
 Usage: bash usp-utils/install/container/run.sh python3 check_zonal.py <root> [<root> ...] [--day D] [--rate]
@@ -69,17 +69,17 @@ class Init:
         v1, v2 = (g("verticesOnEdge") - 1).T
         nlev = dz.shape[1]
         ue = u0 * a * (np.sin(lat_v[v2]) - np.sin(lat_v[v1])) / g("dvEdge")
+        upoint = u0 * np.cos(g("latEdge")) * np.cos(g("angleEdge"))
         s2 = np.sin(g("latCell"))[:, None] ** 2
         p = P_EQ * np.exp(-b * s2 - G * zmid / (RGAS * T0))
         self.exact = {
-            "u": np.repeat(ue[:, None], nlev, axis=1),
+            "u": np.repeat(upoint[:, None], nlev, axis=1),
             "w": np.zeros_like(self.ww[:, :1].repeat(nlev + 1, axis=1)),
             "theta": T0 * (P0 / p) ** (RGAS / CP),
             "rho": p / (RGAS * T0),
             "pressure": p,
             "ps": P_EQ * np.exp(-b * s2[:, 0]),
         }
-        upoint = u0 * np.cos(g("latEdge")) * np.cos(g("angleEdge"))
         self.u_point = np.max(np.abs(ue - upoint)) / u0
         self.u_init = np.max(np.abs(g("u") - self.exact["u"])) / u0
         # residual of the solver's vertical balance, rdzu dp'/dz + g (fzm rho' + fzp rho'), on the levels
@@ -156,7 +156,7 @@ with open(out, "w") as fh:
 print(f"{len(rows)} lines in {out}\n")
 
 print("initial states: residual of the vertical balance (relative to max |g rho'|), u against the")
-print("exact mean over the dual edge and against the point normal velocity at the edge (relative to u0)")
+print("point normal velocity at the edge, and the mean over the dual edge against it (relative to u0)")
 for p, ini in inits.items():
     print(f"  {os.path.relpath(p, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(p))))):45s}"
           f" balance {ini.balance:.1e}  u-exact {ini.u_init:.1e}  mean-point {ini.u_point:.1e}")
