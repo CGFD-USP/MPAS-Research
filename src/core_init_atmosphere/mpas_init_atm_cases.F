@@ -99,15 +99,13 @@ module init_atm_cases
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_init_case', config_init_case)
 
-      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 17 .and. config_init_case <= 25)) then
+      if ((config_init_case >= 1 .and. config_init_case <= 3) .or. (config_init_case >= 21 .and. config_init_case <= 23)) then
 
          call mpas_log_write(' Jablonowski and Williamson baroclinic wave test case ')
-         if (config_init_case == 1 .or. config_init_case == 17 .or. config_init_case == 20 .or. config_init_case == 23) call mpas_log_write(' no initial perturbation ')
-         if (config_init_case == 2 .or. config_init_case == 18 .or. config_init_case == 21 .or. config_init_case == 24) call mpas_log_write(' initial perturbation included ')
-         if (config_init_case == 3 .or. config_init_case == 19 .or. config_init_case == 22 .or. config_init_case == 25) call mpas_log_write(' normal-mode perturbation included ')
-         if (config_init_case >= 17 .and. config_init_case <= 19) call mpas_log_write(' flat surface ')
-         if (config_init_case >= 20) call mpas_log_write(' wind rebalanced against the pressure gradient of the model ')
-         if (config_init_case >= 23) call mpas_log_write(' exact edge average of the 2d wind on a 2d grid refined to the mesh ')
+         if (config_init_case == 1 .or. config_init_case == 21) call mpas_log_write(' no initial perturbation ')
+         if (config_init_case == 2 .or. config_init_case == 22) call mpas_log_write(' initial perturbation included ')
+         if (config_init_case == 3 .or. config_init_case == 23) call mpas_log_write(' normal-mode perturbation included ')
+         if (config_init_case >= 21) call mpas_log_write(' point value at xEdge of the wind balanced against the pressure gradient of the model ')
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
 
@@ -123,7 +121,7 @@ module init_atm_cases
 
             call mpas_log_write(' calling test case setup ')
             call init_atm_case_jw(domain % dminfo, mesh, nCells, nVertLevels, state, diag, block_ptr % configs, &
-                                config_init_case >= 17 .and. config_init_case <= 19, config_init_case >= 20, config_init_case >= 23)
+                                config_init_case >= 21)
             call decouple_variables(mesh, nCells, nVertLevels, state, diag)
             call mpas_log_write(' returned from test case setup ')
             block_ptr => block_ptr % next
@@ -443,7 +441,7 @@ module init_atm_cases
       else
 
          call mpas_log_write(' ***********************************************************', messageType=MPAS_LOG_ERR)
-         call mpas_log_write(' Only test cases 1 through 11 and 13 are currently supported.', messageType=MPAS_LOG_ERR)
+         call mpas_log_write(' Only test cases 1 through 11, 13 and 21 through 23 are currently supported.', messageType=MPAS_LOG_ERR)
          call mpas_log_write(' ***********************************************************', messageType=MPAS_LOG_CRIT)
 
       end if
@@ -451,7 +449,7 @@ module init_atm_cases
 
       !initialization of surface input variables technically not needed to run our current set of
       !idealized test cases:
-      if (config_init_case < 7 .or. config_init_case == 11 .or. (config_init_case >= 17 .and. config_init_case <= 22))  then
+      if (config_init_case < 7 .or. config_init_case == 11)  then
          block_ptr => domain % blocklist
          do while (associated(block_ptr))
             call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
@@ -467,7 +465,7 @@ module init_atm_cases
 
 !----------------------------------------------------------------------------------------------------------
 
-   subroutine init_atm_case_jw(dminfo, mesh, nCells, nVertLevels, state, diag, configs, flat_surface, model_pgf, exact_avg)
+   subroutine init_atm_case_jw(dminfo, mesh, nCells, nVertLevels, state, diag, configs, point_wind)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Setup baroclinic wave test case from Jablonowski and Williamson 2008 (QJRMS)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -540,7 +538,7 @@ module init_atm_cases
 
       logical, parameter :: rebalance = .true.
       integer, parameter :: nlat_default = 721
-      ! with exact_avg the spacing of the 2d grid is at most the shortest cell distance over ratio_2d
+      ! with point_wind the spacing of the 2d grid is at most the shortest cell distance over ratio_2d
       real (kind=RKIND), parameter :: ratio_2d = 8.0
       integer :: nlat
       real (kind=RKIND), dimension(nVertLevels) :: flux_zonal
@@ -549,7 +547,7 @@ module init_atm_cases
       real (kind=RKIND), dimension(:,:), allocatable :: p_2d, pb_2d, ppb_2d, rr_2d, rb_2d, tb_2d, rtb_2d
       real (kind=RKIND), dimension(:,:), allocatable :: zx_2d
       real (kind=RKIND), dimension(:), allocatable :: lat_2d
-      real (kind=RKIND) :: dlat, hx_1d, psurf_jw, dc_min
+      real (kind=RKIND) :: dlat, hx_1d, dc_min
       real (kind=RKIND) :: z_edge, z_edge3, d2fdx2_cell1, d2fdx2_cell2
 
 !      logical, parameter :: moisture = .true.
@@ -570,8 +568,8 @@ module init_atm_cases
       real (kind=RKIND), pointer :: config_coef_3rd_order
       integer, pointer :: config_theta_adv_order
       integer, pointer :: config_init_case
-      logical, intent(in) :: flat_surface, model_pgf, exact_avg
-      logical, pointer :: config_point_wind
+      ! cases 21 -- 23: point value at xEdge of the wind balanced against the pressure gradient of the model
+      logical, intent(in) :: point_wind
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       integer :: jw_case
 
@@ -579,10 +577,7 @@ module init_atm_cases
 
       call mpas_pool_get_config(configs, 'config_init_case', config_init_case)
       jw_case = config_init_case
-      if (flat_surface) jw_case = config_init_case - 16
-      if (model_pgf) jw_case = config_init_case - 19
-      if (exact_avg) jw_case = config_init_case - 22
-      call mpas_pool_get_config(configs, 'config_point_wind', config_point_wind)
+      if (point_wind) jw_case = config_init_case - 20
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', config_coef_3rd_order)
       call mpas_pool_get_config(configs, 'config_theta_adv_order', config_theta_adv_order)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
@@ -733,8 +728,6 @@ module init_atm_cases
       zt = 45000.
       dz = zt/float(nz1)
 
-      if (flat_surface) hx(:,:) = 0.0
-
       call mpas_log_write(' hx computation complete ')
 
       do k=1,nz
@@ -848,7 +841,7 @@ module init_atm_cases
 !**************  section for 2d (z,lat) calc for zonal velocity
 
       nlat = nlat_default
-      if (exact_avg) then
+      if (point_wind) then
         call mpas_dmpar_min_real(dminfo, minval(dcEdge(1:nEdges)), dc_min)
         nlat = max(nlat_default, 1 + ceiling(0.5*pii*r_earth*ratio_2d/dc_min))
       end if
@@ -870,11 +863,6 @@ module init_atm_cases
                          *(u0)*cos(etavs)**1.5                          &
                     +(1.6*cos(phi)**3                                   &
                          *(sin(phi)**2+2./3.)-pii/4.)*r_earth*omega_e)
-        psurf_jw = p0
-        if (flat_surface) then
-          hx_1d = 0.0
-          psurf_jw = p0*jw_etas(phi, u0, t0, dtdz, r_earth, omega_e)
-        end if
 
         do k=1,nz
           zgrid_2d(k,i) = (1.-ah(k))*(sh(k)*(zt-hx_1d)+hx_1d)  &
@@ -936,7 +924,7 @@ module init_atm_cases
               rr_2d(k,i)  = (pp_2d(k,i)/(rgas*zz_2d(k,i)) - rb_2d(k,i)*(tt(k)-t0b))/tt(k)
             end do
 
-            ppi(1) = psurf_jw-.5*dzw(1)*gravity                      &
+            ppi(1) = p0-.5*dzw(1)*gravity                            &
                           *(1.25*(rr_2d(1,i)+rb_2d(1,i))*(1.+qv_2d(1,i))   &
                             -.25*(rr_2d(2,i)+rb_2d(2,i))*(1.+qv_2d(2,i)))
 
@@ -974,7 +962,7 @@ module init_atm_cases
         end do
 
         call init_atm_recompute_geostrophic_wind(u_2d, rho_2d, rb_2d, pp_2d, qv_2d, lat_2d, zz_2d, zx_2d, &
-                                        cf1, cf2, cf3, fzm, fzp, rdzw, nz1, nlat, dlat, sphere_radius, model_pgf)
+                                        cf1, cf2, cf3, fzm, fzp, rdzw, nz1, nlat, dlat, sphere_radius, point_wind)
 
       end if
 
@@ -986,8 +974,6 @@ module init_atm_cases
 !     reference sounding based on dry isothermal atmosphere
 !
       do i=1, nCells
-        psurf_jw = p0
-        if (flat_surface) psurf_jw = p0*jw_etas(latCell(i), u0, t0, dtdz, r_earth, omega_e)
         do k=1,nz1
           ztemp    = .5*(zgrid(k+1,i)+zgrid(k,i))
           ppb(k,i) = p0*exp(-gravity*ztemp/(rgas*t0b)) 
@@ -1066,7 +1052,7 @@ module init_atm_cases
               rr(k,i)  = (pp(k,i)/(rgas*zz(k,i)) - rb(k,i)*(tt(k)-t0b))/tt(k)
             end do
 
-            ppi(1) = psurf_jw-.5*dzw(1)*gravity                   &
+            ppi(1) = p0-.5*dzw(1)*gravity                         &
                           *(1.25*(rr(1,i)+rb(1,i))*(1.+scalars(index_qv,1,i))   &
                             -.25*(rr(2,i)+rb(2,i))*(1.+scalars(index_qv,2,i)))
 
@@ -1128,7 +1114,7 @@ module init_atm_cases
          lat2 = latVertex(vtx2)
          iCell1 = cellsOnEdge(1,iEdge)
          iCell2 = cellsOnEdge(2,iEdge)
-         if (config_point_wind) then
+         if (point_wind) then
             flux = sin(2.0_RKIND*latEdge(iEdge))**2 * cos(angleEdge(iEdge))
          else
             flux = (0.5*(lat2-lat1) - 0.125*(sin(4.*lat2) - sin(4.*lat1))) * sphere_radius / dvEdge(iEdge)
@@ -1137,7 +1123,7 @@ module init_atm_cases
          if (jw_case == 2) then
             r_pert = sphere_distance( latEdge(iEdge), lonEdge(iEdge), &
                                       lat_pert, lon_pert, 1.0_RKIND)/(pert_radius)
-            if (config_point_wind) then
+            if (point_wind) then
                u_pert = u_perturbation*exp(-r_pert**2)*cos(angleEdge(iEdge))
             else
                u_pert = u_perturbation*exp(-r_pert**2)*(lat2-lat1) * sphere_radius / dvEdge(iEdge)
@@ -1145,7 +1131,7 @@ module init_atm_cases
 
          else if (jw_case == 3) then
             lon_Edge = lonEdge(iEdge)
-            if (config_point_wind) then
+            if (point_wind) then
                u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert))*flux
             else
                u_pert = u_perturbation*cos(k_x*(lon_Edge - lon_pert)) &
@@ -1157,10 +1143,10 @@ module init_atm_cases
 
          if (rebalance) then
 
-           if (config_point_wind) then
+           if (point_wind) then
              call init_atm_calc_point_zonal(u_2d,lat_2d,flux_zonal,latEdge(iEdge),cos(angleEdge(iEdge)),u0,nz1,nlat)
            else
-             call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat,exact_avg)
+             call init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1,lat2,dvEdge(iEdge),sphere_radius,u0,nz1,nlat)
            end if
            do k=1,nVertLevels
              fluxk = u0*flux_zonal(k)/(0.5*(rb(k,iCell1)+rb(k,iCell2)+rr(k,iCell1)+rr(k,iCell2)))
@@ -1325,42 +1311,7 @@ module init_atm_cases
    end subroutine init_atm_case_jw
 
 
-   real (kind=RKIND) function jw_etas(phi, u0, t0, dtdz, a, om)
-      ! eta at which the JW geopotential of latitude phi is zero (flat surface)
-      implicit none
-      real (kind=RKIND), intent(in) :: phi, u0, t0, dtdz, a, om
-      real (kind=RKIND) :: lo, hi, mid, flo, fmid
-      integer :: it
-      lo = 0.8_RKIND
-      hi = 1.2_RKIND
-      flo = jw_geopot(lo, phi, u0, t0, dtdz, a, om)
-      do it = 1, 100
-         mid = 0.5_RKIND*(lo+hi)
-         fmid = jw_geopot(mid, phi, u0, t0, dtdz, a, om)
-         if (fmid*flo > 0.0_RKIND) then
-            lo = mid
-            flo = fmid
-         else
-            hi = mid
-         end if
-      end do
-      jw_etas = 0.5_RKIND*(lo+hi)
-   end function jw_etas
-
-
-   real (kind=RKIND) function jw_geopot(eta, phi, u0, t0, dtdz, a, om)
-      implicit none
-      real (kind=RKIND), intent(in) :: eta, phi, u0, t0, dtdz, a, om
-      real (kind=RKIND) :: etav
-      etav = (eta - 0.252_RKIND)*pii/2.0_RKIND
-      jw_geopot = t0*gravity/dtdz*(1.0_RKIND - eta**(rgas*dtdz/gravity))                  &
-                + u0*cos(etav)**1.5_RKIND*((-2.0_RKIND*sin(phi)**6*(cos(phi)**2+1.0_RKIND/3.0_RKIND)+10.0_RKIND/63.0_RKIND) &
-                  *u0*cos(etav)**1.5_RKIND                                                &
-                + (1.6_RKIND*cos(phi)**3*(sin(phi)**2+2.0_RKIND/3.0_RKIND)-pii/4.0_RKIND)*a*om)
-   end function jw_geopot
-
-
-   subroutine init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1_in,lat2_in,dvEdge,a,u0,nz1,nlat,exact_avg)
+   subroutine init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1_in,lat2_in,dvEdge,a,u0,nz1,nlat)
 
       implicit none
    
@@ -1369,9 +1320,8 @@ module init_atm_cases
       real (kind=RKIND), dimension(nlat), intent(in) :: lat_2d
       real (kind=RKIND), dimension(nz1), intent(out) :: flux_zonal
       real (kind=RKIND), intent(in) :: lat1_in, lat2_in, dvEdge, a, u0
-      logical, intent(in) :: exact_avg
    
-      integer :: k,i,i1,i2
+      integer :: k,i
       real (kind=RKIND) :: lat1, lat2, w1, w2
       real (kind=RKIND) :: dlat,da,db
    
@@ -1386,19 +1336,14 @@ module init_atm_cases
         flux_zonal(k) = 0.
       end do
    
-      ! only the intervals around lat1 to lat2 can overlap
-      i1 = max(1, int(lat1/lat_2d(2)) - 1)
-      i2 = min(nlat-1, int(lat2/lat_2d(2)) + 2)
-
-      do i=i1,i2
+      do i=1,nlat-1
         if( (lat1 <= lat_2d(i+1)) .and. (lat2 >= lat_2d(i)) ) then
    
         dlat = lat_2d(i+1)-lat_2d(i)
         da = (max(lat1,lat_2d(i))-lat_2d(i))/dlat
         db = (min(lat2,lat_2d(i+1))-lat_2d(i))/dlat
+        w1 = (db-da) -0.5*(db-da)**2
         w2 = 0.5*(db-da)**2
-        if (exact_avg) w2 = 0.5*(db**2-da**2)
-        w1 = (db-da) - w2
    
         do k=1,nz1
           flux_zonal(k) = flux_zonal(k) + w1*u_2d(k,i) + w2*u_2d(k,i+1)
@@ -1569,8 +1514,7 @@ module init_atm_cases
    ! w = 0, T = t0, p = p_eq exp(-((a omega u0 + u0^2/2) sin^2(lat) + g z) / (R t0)),
    ! an exact steady solution of the shallow-atmosphere equations. Uniform levels
    ! up to config_ztop. The pressure is in discrete hydrostatic balance in each
-   ! column, and u at an edge is the mean normal velocity over the dual edge
-   ! (stream function -a u0 sin(lat)), or its point value at xEdge with config_point_wind.
+   ! column, and u at an edge is the point value of the normal velocity at xEdge.
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       implicit none
@@ -1596,9 +1540,9 @@ module init_atm_cases
       real (kind=RKIND), dimension(:,:), pointer :: kiteAreasOnVertex, weightsOnEdge
       real (kind=RKIND), dimension(:), pointer :: latCell, latEdge, latVertex, angleEdge, fEdge, fVertex
       real (kind=RKIND), pointer :: nominalMinDc, sphere_radius, config_ztop, cf1, cf2, cf3
-      logical, pointer :: on_a_sphere, config_point_wind
+      logical, pointer :: on_a_sphere
       integer, dimension(:), pointer :: nEdgesOnEdge
-      integer, dimension(:,:), pointer :: edgesOnEdge, cellsOnEdge, verticesOnEdge
+      integer, dimension(:,:), pointer :: edgesOnEdge, cellsOnEdge
       integer, pointer :: nEdges, maxEdges, nVertices
       character (len=StrKIND), pointer :: config_interface_projection
 
@@ -1609,7 +1553,6 @@ module init_atm_cases
 
       call mpas_pool_get_config(configs, 'config_ztop', config_ztop)
       call mpas_pool_get_config(configs, 'config_interface_projection', config_interface_projection)
-      call mpas_pool_get_config(configs, 'config_point_wind', config_point_wind)
       call mpas_pool_get_config(mesh, 'on_a_sphere', on_a_sphere)
       call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
 
@@ -1636,7 +1579,6 @@ module init_atm_cases
       call mpas_pool_get_array(mesh, 'nEdgesOnEdge', nEdgesOnEdge)
       call mpas_pool_get_array(mesh, 'edgesOnEdge', edgesOnEdge)
       call mpas_pool_get_array(mesh, 'cellsOnEdge', cellsOnEdge)
-      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
       call mpas_pool_get_array(mesh, 'latCell', latCell)
       call mpas_pool_get_array(mesh, 'latEdge', latEdge)
       call mpas_pool_get_array(mesh, 'latVertex', latVertex)
@@ -1776,16 +1718,10 @@ module init_atm_cases
       end do
       scalars(:,:,:) = 0.0_RKIND
 
-      ! normal velocity: mean over the dual edge, from the stream function at its vertices, or the point value at xEdge
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1,iEdge)
          cell2 = cellsOnEdge(2,iEdge)
-         if (config_point_wind) then
-            u(:,iEdge) = u0 * cos(latEdge(iEdge)) * cos(angleEdge(iEdge))
-         else
-            u(:,iEdge) = u0 * sphere_radius * (sin(latVertex(verticesOnEdge(2,iEdge))) - sin(latVertex(verticesOnEdge(1,iEdge)))) &
-                       / dvEdge(iEdge)
-         end if
+         u(:,iEdge) = u0 * cos(latEdge(iEdge)) * cos(angleEdge(iEdge))
          ru(:,iEdge) = 0.5_RKIND * (rho_zz(:,cell1) + rho_zz(:,cell2)) * u(:,iEdge)
          fEdge(iEdge) = 2.0_RKIND * omega * sin(latEdge(iEdge))
       end do
